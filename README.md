@@ -73,6 +73,14 @@ copies the look across, colours and all.
 - `vendor/` holds three.js and its loaders.
 - `finder/` holds the piece finder: `finder_core.js` and the outline model it runs (`model/`).
 
+## Good for
+
+Splitting a character mesh into separate clothing, accessories, props and body parts; separating clothes from an
+AI-generated 3D character so they can be fitted, rigged or swapped; cutting up scanned or photogrammetry models;
+preparing game assets for Unity, Unreal, Godot or Blender. It is a browser-based mesh segmentation tool (paint to
+select, fill by colour and folds, plus an automatic piece finder built on Segment Anything) that reads GLB, glTF, OBJ,
+FBX, STL and PLY and exports each piece as its own GLB.
+
 ## Credits and licence
 
 MeshShears is MIT licensed (see `LICENSE`). It's built on three.js, uses Meta's SAM 2.1 model for the piece finder
