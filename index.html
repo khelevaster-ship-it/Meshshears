@@ -74,7 +74,13 @@ svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; s
 #cursor { position: absolute; pointer-events: none; border: 1.5px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgba(0,0,0,.55); transform: translate(-50%, -50%); }
 #lasso { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 #lasso polyline { fill: rgba(127,169,230,.18); stroke: #fff; stroke-width: 1.5; stroke-dasharray: 5 4; }
-#help { position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - 24px); font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--panel) 88%, transparent); padding: 6px 10px; border-radius: 8px; pointer-events: none; }
+#help { position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - 24px); max-height: calc(100% - 24px); overflow: auto; font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--panel) 88%, transparent); padding: 6px 10px; border-radius: 8px; }
+#help .lg-head { all: unset; cursor: pointer; font-weight: 600; color: var(--text, inherit); display: block; }
+#help .lg-group { margin-top: 6px; font-weight: 600; color: var(--text, inherit); }
+#help { font-size: 11.5px; }
+#help .lg-row { display: grid; grid-template-columns: 8.5em 1fr; gap: 6px; line-height: 1.45; }
+#help .lg-row kbd { font: inherit; font-weight: 600; white-space: nowrap; }
+#help.folded .lg-body { display: none; }
 #toast { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); max-width: calc(100% - 24px); background: var(--fg); color: var(--bg); padding: 9px 14px; border-radius: 8px; font-size: 13px; line-height: 1.35; box-shadow: var(--shadow); z-index: 5; }
 #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 15px; text-align: center; padding: 24px; }
 #finding { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 5; width: min(420px, calc(100% - 32px)); }
@@ -185,6 +191,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
           <button id="findPieces" role="menuitem" hidden>Find pieces automatically…</button>
           <button id="openPiecesFile" role="menuitem">Open a found-pieces file…</button>
           <button id="savePiecesFile" role="menuitem" hidden>Save found pieces to a file…</button>
+          <button id="copyFinderReport" role="menuitem" hidden title="What the last piece finder run did, as text to paste into a message when something went wrong">Copy piece finder report</button>
           <button id="forgetModel" role="menuitem">Remove this model from this browser</button>
           <hr>
           <button id="showGuide" role="menuitem">How it works</button>
@@ -273,10 +280,13 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
     <details class="card" id="fillOpts">
       <summary>Fill options</summary>
-      <div id="findBox" hidden><button id="findPiecesBtn" title="Photographs the model from 40 sides and outlines what it sees; afterwards one Fill click takes a whole piece">Find pieces automatically</button><span class="sub">Takes a few minutes; you can keep working.</span></div>
+      <div id="findBox" hidden><button id="findPiecesBtn" title="Photographs the model from 40 sides and outlines what it sees; afterwards one Fill click takes a whole piece">Find pieces automatically</button><label class="sub" title="Ten photos of each kind instead of twenty: about twice as fast, but small pieces seen only up close may be missed"><input type="checkbox" id="findQuick"> Quick: 20 photos instead of 40</label><span class="sub">Takes a few minutes; you can keep working.</span></div>
       <div id="piecesBox" hidden>
         <label class="switch"><input id="pieceFill" type="checkbox" checked> Fill takes a whole found piece</label>
         <label class="switch"><input id="showPieces" type="checkbox"> Show found pieces</label>
+        <div id="pieceSizeRow" hidden><div class="row"><label for="pieceSize" class="grow">Piece size</label><span class="val">bigger ↔ smaller</span></div>
+        <input id="pieceSize" type="range" min="0" max="4" step="1" value="2" aria-label="Found piece size: left joins more, right splits more"></div>
+        <div class="row"><button id="splitPiece" title="Then click a found piece to cut it into smaller parts">Split a piece</button><button id="joinPieces" title="Then click two found pieces to make them one">Join two pieces</button></div>
       </div>
       <label class="switch"><input id="edgeFill" type="checkbox" checked> Fill stops at colour changes and sharp folds</label>
       <div class="row"><label for="edgeSens" class="grow">Edge sensitivity</label><span id="edgeSensVal" class="val">50</span></div>
@@ -1107,7 +1117,7 @@ const ModelIO = (() => {
       S.palTex = new THREE.DataTexture(new Uint8Array(256 * 3 * 4), 256, 3, THREE.RGBAFormat, THREE.UnsignedByteType);
       S.palTex.magFilter = S.palTex.minFilter = THREE.NearestFilter; S.palTex.generateMipmaps = false; S.palTex.flipY = false;
     }
-    S.pieces = pieces;
+    S.pieces = pieces; S.pieceLevels = null; S.pieceLevel = 2; S.pieceMode = null; $("pieceSizeRow").hidden = true;
     if (pieces) { const dd = S.labTex.image.data; for (let f = 0; f < S.nFaces; f++) dd[f * 4 + 3] = pieces[f] % 251 + 1; }
     markUniforms.uLab.value = S.labTex; markUniforms.uPal.value = S.palTex; markUniforms.uLabW.value = LW; markUniforms.uLabH.value = LH;
     S.clothGeo = g;
@@ -1699,6 +1709,7 @@ const ModelIO = (() => {
   function toolStart(e) {
     ensurePick();
     const p = bufXY(e);
+    if (S.pieceMode) { pieceModeClick(faceAt(p.x, p.y)); drag = { kind: "none" }; return; }
     if (S.tool === "clone") {
       if (e.altKey || !S.clone.src) { setCloneSource(p.x, p.y); drag = { kind: "none" }; return; }
       beginClone(p.x, p.y); lastPt = null; brushTo(p.x, p.y); updateCountsUI(); drag = { kind: "paint" }; return;
@@ -1850,6 +1861,9 @@ const ModelIO = (() => {
   $("through").addEventListener("change", e => { S.through = e.target.checked; });
   S.edgeFill = true; S.edgeSens = 50; S.pieceFill = true;
   $("pieceFill").addEventListener("change", e => { S.pieceFill = e.target.checked; });
+  $("pieceSize").addEventListener("change", e => setPieceLevel(+e.target.value));
+  $("splitPiece").addEventListener("click", () => armPieceMode("split"));
+  $("joinPieces").addEventListener("click", () => armPieceMode("join"));
   $("showPieces").addEventListener("change", e => { markUniforms.uShowPieces.value = e.target.checked ? 1 : 0; requestRender(); });
   $("edgeFill").addEventListener("change", e => { S.edgeFill = e.target.checked; });
   $("edgeSens").addEventListener("input", e => { S.edgeSens = +e.target.value; $("edgeSensVal").textContent = e.target.value; });
@@ -1973,11 +1987,22 @@ const ModelIO = (() => {
     else if (S.savedAt) el.textContent = "Saved " + fmtTime(new Date(S.savedAt));
     else el.textContent = "Not saved yet";
   }
+  // the key legend: every mouse move and key, in rows down the bottom left; a click on its title folds it away
+  const LEGEND = [
+    ["Moving around", [["Left drag", "paint with the tool"], ["Right drag", "turn"], ["Space + drag", "turn"], ["Wheel", "zoom"], ["Middle drag", "slide"], ["Shift + right drag", "slide"], ["W A S D", "slide"], ["Arrow keys", "turn"], ["+ \u2212", "zoom"], ["R", "reset the view"]]],
+    ["Tools", [["B", "Brush"], ["F", "Fill"], ["L", "Lasso"], ["E", "Eraser"], ["[  ]", "brush smaller, bigger"], ["P", "preview the cut"], ["1 to 9", "pick that part or colour"]]],
+    ["Colours to fix", [["I", "Pick colour"], ["K", "Clone"], ["Alt + click", "Clone: choose the good area to copy (the +)"], ["First click", "Clone: also sets the + if none is set"]]],
+    ["Found pieces", [["Split a piece", "then click a piece"], ["Join two pieces", "then click two pieces"]]],
+    ["Undo and menus", [["Ctrl + Z", "undo"], ["Ctrl + Y", "redo (or Ctrl + Shift + Z)"], ["Esc", "close a menu or the guide"]]]];
+  const TOUCH_LEGEND = [["Touch", [["One finger", "paint with the tool"], ["Two fingers", "slide"], ["Pinch", "zoom"], ["Twist", "turn"], ["Turn tool", "makes one finger turn"]]]];
   function setHelp() {
-    const touch = matchMedia("(pointer: coarse)").matches;
-    $("help").textContent = touch
-      ? "One finger paints. Two fingers slide, pinch to zoom, twist to turn. The Turn tool makes one finger turn."
-      : "Left drag paints · Right drag turns · Wheel zooms · Middle drag slides · W A S D slide · Arrows turn · + − zoom · R resets the view";
+    const touch = matchMedia("(pointer: coarse)").matches, el = $("help"), esc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    el.innerHTML = '<button class="lg-head" id="helpHead" aria-expanded="true">Keys and mouse ▾</button><div class="lg-body">' +
+      (touch ? TOUCH_LEGEND : LEGEND).map(([g, rows]) => '<div class="lg-group">' + esc(g) + "</div>" + rows.map(([k, v]) => '<div class="lg-row"><kbd>' + esc(k) + "</kbd><span>" + esc(v) + "</span></div>").join("")).join("") + "</div>";
+    let folded = false; try { folded = localStorage.getItem("cutpage:legend") === "folded"; } catch (e) {}
+    const fold = f => { el.classList.toggle("folded", f); $("helpHead").setAttribute("aria-expanded", String(!f)); $("helpHead").textContent = "Keys and mouse " + (f ? "\u25b8" : "\u25be"); };
+    fold(folded);
+    $("helpHead").addEventListener("click", () => { folded = !folded; fold(folded); try { localStorage.setItem("cutpage:legend", folded ? "folded" : "open"); } catch (e) {} });
   }
   setHelp();
 
@@ -2279,11 +2304,19 @@ const ModelIO = (() => {
 
   /* ---------- found pieces for your own models ---------- */
   // A pieces file (made by the piece finder) gives each face a piece number; Fill can then take a whole piece.
-  function usePieces(pieces) {
-    S.pieces = pieces;
+  // levels: the same pieces at five sizes (bigger to smaller), level: which one is shown; without levels the size
+  // slider is hidden
+  function usePieces(pieces, levels, level) {
+    S.pieces = pieces; S.pieceLevels = levels || null; S.pieceLevel = levels ? (level == null ? 2 : level) : 2; S.pieceMode = null;
+    $("pieceSizeRow").hidden = !levels; if (levels) $("pieceSize").value = S.pieceLevel;
     const dd = S.labTex.image.data; for (let f = 0; f < S.nFaces; f++) dd[f * 4 + 3] = pieces ? pieces[f] % 251 + 1 : 0;
     S.labTex.needsUpdate = true; requestRender();
     $("piecesBox").hidden = !pieces; updateFinderUI();
+  }
+  // the five sizes, where the file or the browser keeps them
+  function readLevels(d) {
+    if (!Array.isArray(d.levels) || d.levels.length !== 5) return null;
+    try { return d.levels.map(b => { const u8 = CutCore.b64ToBytes(b); if (u8.length !== S.nFaces * 4) throw 0; return new Uint32Array(u8.buffer, u8.byteOffset, S.nFaces).slice(); }); } catch (e) { return null; }
   }
   function readPiecesData(d) {
     if (!d || d.format !== "paint-to-cut-pieces" || typeof d.pieces !== "string") throw new Error("That is not a pieces file.");
@@ -2295,7 +2328,7 @@ const ModelIO = (() => {
     if (!S.fig) { toast("Open a model first, then its pieces file."); return; }
     try {
       const d = JSON.parse(await file.text()), pieces = readPiecesData(d);
-      usePieces(pieces);
+      usePieces(pieces, readLevels(d), d.level);
       try { await LocalStore.set("pieces:" + S.fig.cloth.meshId, d); } catch (e) {}
       let n = 0; { const seen = new Set(); for (let f = 0; f < S.nFaces; f++) seen.add(pieces[f]); n = seen.size; }
       toast(n + " found pieces loaded. With Fill, one click takes a whole piece (Fill options).", 6000);
@@ -2303,7 +2336,7 @@ const ModelIO = (() => {
   }
   async function openLocalPieces() {
     if (S.pieces) return;
-    try { const d = await LocalStore.get("pieces:" + S.fig.cloth.meshId); if (d) usePieces(readPiecesData(d)); } catch (e) {}
+    try { const d = await LocalStore.get("pieces:" + S.fig.cloth.meshId); if (d) usePieces(readPiecesData(d), readLevels(d), d.level); } catch (e) {}
   }
 
   /* ---------- your models kept in this browser ---------- */
@@ -2453,19 +2486,22 @@ const ModelIO = (() => {
   // run in the browser) outlines each photo; outlines that agree across photos join faces into pieces.
   // The runtime and model ship as script files beside the page (finder/model/); where they are missing the
   // button stays hidden.
-  const Finder = { busy: false, cancel: false, worker: null, ready: false, loading: null, reject: null, gpu: false, times: null };
-  const PHOTO = 1024;
+  const Finder = { busy: false, cancel: false, worker: null, workers: [], pending: new Map(), ready: false, loading: null, gpu: false, times: null };
+  const PHOTO = 1024, PHOTO_BG = 0x808080;
   function finderAvailable() { return !!(window.FinderModel && window.FinderCore); }
   function updateFinderUI() {
     const ok = finderAvailable() && !!S.fig;
     $("findPieces").hidden = !ok; $("findBox").hidden = !ok || !!S.pieces; $("savePiecesFile").hidden = !S.pieces;
     $("findPieces").textContent = S.pieces ? "Find pieces again…" : "Find pieces automatically…";
   }
-  function photoViews() {
-    const v = [];
+  // quick mode: the ring of eight side photos and the two from above (10 of the 20 per set)
+  const QUICK_VIEWS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10];
+  function photoViews(quick) {
+    let v = [];
     for (let a = 0; a < 8; a++) v.push([a * Math.PI / 4, 0.05, 1, 0]);
     for (const az of [0, Math.PI]) { v.push([az, 0.7, 1, 0]); v.push([az, -0.5, 1, 0]); }
     for (let a = 0; a < 4; a++) { v.push([a * Math.PI / 2, 0.05, 0.55, 0.25]); v.push([a * Math.PI / 2, 0.05, 0.55, -0.25]); }
+    if (quick) v = QUICK_VIEWS.map(i => v[i]);
     // the checks use fewer photos to stay quick
     return window.__finderViews ? v.slice(0, window.__finderViews) : v;
   }
@@ -2473,25 +2509,55 @@ const ModelIO = (() => {
   // The outline finder looks at 1024 x 1024 colour photos (smoothed edges); the face numbers and the kept outlines
   // are 1448 x 1448, so small faces are still seen.
   const ID_PHOTO = 1448;
-  function takePhotos(shape) {
-    const W = PHOTO, H = PHOTO, IW = ID_PHOTO, IH = ID_PHOTO, out = [];
-    const gl2 = renderer.capabilities.isWebGL2;
-    const rt = gl2 ? new THREE.WebGLMultisampleRenderTarget(W, H, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType }) : new THREE.WebGLRenderTarget(W, H, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType });
+  // only: the view numbers to take (all when left out)
+  // during a run the photo targets and the facing colours are made once (photoKit), not for every photo
+  let photoKit = null;
+  function openPhotoKit() {
+    const gl2 = renderer.capabilities.isWebGL2, W = PHOTO, IW = ID_PHOTO;
+    const rt = gl2 ? new THREE.WebGLMultisampleRenderTarget(W, W, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType }) : new THREE.WebGLRenderTarget(W, W, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType });
     if (gl2) rt.samples = 4;
     rt.texture.encoding = THREE.sRGBEncoding;
-    const idRt = new THREE.WebGLRenderTarget(IW, IH, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, format: THREE.RGBAFormat, type: THREE.UnsignedByteType });
+    photoKit = { rt, idRt: new THREE.WebGLRenderTarget(IW, IW, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, format: THREE.RGBAFormat, type: THREE.UnsignedByteType }), normal: new THREE.MeshNormalMaterial({ side: THREE.DoubleSide }) };
+  }
+  // one photo in two halves with a pause between, so painting is not held up for long
+  async function takePhotoRaw(shape, quick, vi) {
+    const a = takePhotos(shape, quick, [vi], true, "rgb")[0];
+    await new Promise(res => setTimeout(res, 0));
+    a.ids = takePhotos(false, quick, [vi], true, "ids")[0].ids;
+    return a;
+  }
+  function closePhotoKit() { if (photoKit) { photoKit.rt.dispose(); photoKit.idRt.dispose(); photoKit.normal.dispose(); photoKit = null; } }
+  // raw: the pixels as read (rows bottom up, face numbers still as colours), turned round by the finder instead of here
+  // so the page does not pause
+  // part (with raw): "rgb" or "ids" takes only that half
+  function takePhotos(shape, quick, only, raw, part) {
+    const W = PHOTO, H = PHOTO, IW = ID_PHOTO, IH = ID_PHOTO, out = [];
+    const gl2 = renderer.capabilities.isWebGL2, kit = photoKit;
+    const rt = kit ? kit.rt : gl2 ? new THREE.WebGLMultisampleRenderTarget(W, H, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType }) : new THREE.WebGLRenderTarget(W, H, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType });
+    if (gl2) rt.samples = 4;
+    rt.texture.encoding = THREE.sRGBEncoding;
+    const idRt = kit ? kit.idRt : new THREE.WebGLRenderTarget(IW, IH, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, format: THREE.RGBAFormat, type: THREE.UnsignedByteType });
     const o = S.orbit, saved = { t: o.target.clone(), az: o.az, el: o.el, dist: o.dist, aspect: camera.aspect, str: strengthUniform.value, pcs: markUniforms.uShowPieces.value, mat: S.clothMesh.material };
     const oldC = renderer.getClearColor(new THREE.Color()), oldA = renderer.getClearAlpha();
     try {
       strengthUniform.value = 0; markUniforms.uShowPieces.value = 0;
-      if (shape) S.clothMesh.material = new THREE.MeshNormalMaterial({ side: THREE.DoubleSide });
+      if (shape) S.clothMesh.material = kit ? kit.normal : new THREE.MeshNormalMaterial({ side: THREE.DoubleSide });
       camera.aspect = 1; camera.updateProjectionMatrix();
       const hf = S.homeFit, tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
       const dist1 = Math.max(hf.fitH, hf.halfW / tanH) * 1.12 + hf.depth;
       const buf = new Uint8Array(W * H * 4), ibuf = new Uint8Array(IW * IH * 4);
-      for (const [az, el, zoom, dz] of photoViews()) {
+      const views = photoViews(quick);
+      for (const [az, el, zoom, dz] of only ? only.map(i => views[i]) : views) {
         o.target.copy(S.home.target); o.target.z += dz * hf.height; o.az = az; o.el = el; o.dist = dist1 * zoom; placeCamera();
-        renderer.setRenderTarget(rt); renderer.setClearColor(new THREE.Color(cssToken("--stage")), 1); renderer.clear(); renderer.render(scene, camera);
+        // a fixed mid-grey behind the model (not the screen theme's colour), so a run gives the same pieces in either theme
+        if (raw) {
+          const ph = { raw: true, w: W, h: H, iw: IW, ih: IH };
+          if (part !== "ids") { renderer.setRenderTarget(rt); renderer.setClearColor(PHOTO_BG, 1); renderer.clear(); renderer.render(scene, camera); renderer.readRenderTargetPixels(rt, 0, 0, W, H, buf); ph.rgb = buf.slice(); }
+          if (part !== "rgb") { renderer.setRenderTarget(idRt); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(pickScene, camera); renderer.readRenderTargetPixels(idRt, 0, 0, IW, IH, ibuf); ph.ids = ibuf.slice(); }
+          out.push(ph);
+          continue;
+        }
+        renderer.setRenderTarget(rt); renderer.setClearColor(PHOTO_BG, 1); renderer.clear(); renderer.render(scene, camera);
         renderer.readRenderTargetPixels(rt, 0, 0, W, H, buf);
         const rgb = new Uint8Array(W * H * 4);
         for (let y = 0; y < H; y++) rgb.set(buf.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);
@@ -2503,10 +2569,11 @@ const ModelIO = (() => {
       }
     } finally {
       renderer.setRenderTarget(null); renderer.setClearColor(oldC, oldA);
-      if (shape) { S.clothMesh.material.dispose(); S.clothMesh.material = saved.mat; }
+      if (shape) { if (!kit) S.clothMesh.material.dispose(); S.clothMesh.material = saved.mat; }
       strengthUniform.value = saved.str; markUniforms.uShowPieces.value = saved.pcs;
       o.target.copy(saved.t); o.az = saved.az; o.el = saved.el; o.dist = saved.dist; camera.aspect = saved.aspect; camera.updateProjectionMatrix();
-      rt.dispose(); idRt.dispose(); cameraChanged();
+      if (!kit) { rt.dispose(); idRt.dispose(); }
+      cameraChanged();
     }
     return out;
   }
@@ -2518,27 +2585,92 @@ const ModelIO = (() => {
   function finderWorkerMain() {
     const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
     let ses = null, job = null;
-    const bytes = s => { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; };
+    const bytes = s => { if (typeof s !== "string") return s; const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; };
     const blobUrl = t => URL.createObjectURL(new Blob([t], { type: "text/javascript" }));
-    async function outline(ph) {
+    // a test picture with four known discs: the outline model must find each disc from a point at its centre (checks
+    // the photo step and the outline step together, on whatever runs them)
+    async function canary(enc, dec) {
+      const W = 1024, n = W * W, x = new Float32Array(3 * n), D = [[300, 300, 140, [220, 40, 40]], [720, 300, 110, [40, 160, 60]], [300, 720, 120, [40, 70, 210]], [720, 720, 150, [230, 200, 40]]];
+      for (let y = 0; y < W; y++) for (let xx = 0; xx < W; xx++) {
+        let col = [128, 128, 128]; for (const [cx, cy, r, c] of D) if ((xx - cx) ** 2 + (y - cy) ** 2 < r * r) col = c;
+        for (let c = 0; c < 3; c++) x[c * n + y * W + xx] = (col[c] / 255 - MEAN[c]) / STD[c];
+      }
+      const e = await enc.run({ image: new ort.Tensor("float32", x, [1, 3, W, W]) });
+      const P = new Float32Array(D.flatMap(d => [d[0], d[1]]));
+      const r = await dec.run({ image_embed: e.image_embed, high_res0: e.high_res0, high_res1: e.high_res1, points: new ort.Tensor("float32", P, [4, 1, 2]), labels: new ort.Tensor("int32", new Int32Array(4).fill(1), [4, 1]) });
+      // each point gives a few outlines (whole and parts); the best of them must match the disc
+      const L = FinderCore.LOW, low = r.low_res_masks.data, s = W / L, per = r.iou.data.length / 4; let worst = 1;
+      D.forEach(([cx, cy, rad], k) => { let best = 0;
+        for (let j = 0; j < per; j++) { const o = (k * per + j) * L * L; let both = 0, either = 0;
+          for (let y = 0; y < L; y++) for (let xx = 0; xx < L; xx++) { const a = low[o + y * L + xx] > 0, b = ((xx + 0.5) * s - cx) ** 2 + ((y + 0.5) * s - cy) ** 2 < rad * rad; if (a || b) { either++; if (a && b) both++; } }
+          best = Math.max(best, either ? both / either : 0); }
+        worst = Math.min(worst, best); });
+      return worst;
+    }
+    function saneBatch(r) {
+      const iou = r.iou && r.iou.data, low = r.low_res_masks && r.low_res_masks.data;
+      if (!iou || !low) return false;
+      for (let i = 0; i < iou.length; i++) if (!(iou[i] >= -0.5 && iou[i] <= 1.5)) return false;
+      for (let i = 0; i < low.length; i += 97) if (!Number.isFinite(low[i])) return false;
+      return true;
+    }
+    async function outline(ph, batch) {
       const n = ph.w * ph.h, x = new Float32Array(3 * n);
       for (let c = 0; c < 3; c++) { const m = MEAN[c], sd = STD[c], o = c * n; for (let p = 0; p < n; p++) x[o + p] = (ph.rgb[p * 4 + c] / 255 - m) / sd; }
-      const t0 = performance.now();
-      const e = await ses.enc.run({ image: new ort.Tensor("float32", x, [1, 3, ph.h, ph.w]) });
+      const t0 = performance.now(), feed = { image: new ort.Tensor("float32", x, [1, 3, ph.h, ph.w]) };
+      let e = await ses.enc.run(feed);
+      if (!ses.encChecked) {
+        // the photo step on the graphics card: its answer must match the processor's on the first photo, or the rest
+        // of the run stays on the processor
+        const c = await ses.cpuEnc.run(feed);
+        let worst = 1;
+        for (const k of ["image_embed", "high_res0", "high_res1"]) {
+          const a = e[k] && e[k].data, b = c[k].data; let ab = 0, aa = 0, bb = 0;
+          if (!a || a.length !== b.length) { worst = 0; break; }
+          for (let i = 0; i < b.length; i++) { ab += a[i] * b[i]; aa += a[i] * a[i]; bb += b[i] * b[i]; }
+          worst = Math.min(worst, aa && bb ? ab / Math.sqrt(aa * bb) : 0);
+        }
+        ses.encChecked = true; ses.encNote = "photo step agreeing " + (100 * worst).toFixed(2) + "%";
+        // (the graphics card's 16-bit model and the processor's 8-bit one agree to about 0.975 on real photos; a wrong
+        // answer is far below)
+        if (!(worst > 0.95)) { ses.enc = ses.cpuEnc; ses.encGpu = false; e = c; }
+      }
       const t1 = performance.now();
       const sx = ph.iw / ph.w, sy = ph.ih / ph.h;
       const pts = FinderCore.gridPoints(24, ph.w, ph.h, (px, py) => ph.ids[Math.floor((py + 0.5) * sy) * ph.iw + Math.floor((px + 0.5) * sx)] >= 0), cands = [];
-      for (let s = 0; s < pts.length; s += job.batch) {
-        const p = pts.slice(s, s + job.batch), P = new Float32Array(p.length * 2);
+      for (let s = 0; s < pts.length; s += batch) {
+        const p = pts.slice(s, s + batch), P = new Float32Array(p.length * 2);
         p.forEach((q, i) => { P[i * 2] = q[0] * 1024; P[i * 2 + 1] = q[1] * 1024; });
-        const r = await ses.dec.run({ image_embed: e.image_embed, high_res0: e.high_res0, high_res1: e.high_res1,
+        const feeds = () => ({ image_embed: e.image_embed, high_res0: e.high_res0, high_res1: e.high_res1,
           points: new ort.Tensor("float32", P, [p.length, 1, 2]), labels: new ort.Tensor("int32", new Int32Array(p.length).fill(1), [p.length, 1]) });
+        let r;
+        try { r = await ses.dec.run(feeds()); } catch (err) { if (!ses.gpu) throw err; r = null; }
+        // the graphics card's answer must be sane (numbers, scores between 0 and 1), or this batch and the rest of the
+        // run go to the processor
+        if (ses.gpu && (!r || !saneBatch(r))) { ses.dec = ses.cpuDec; ses.gpu = false; ses.gpuNote = (ses.gpuNote ? ses.gpuNote + "; " : "") + "graphics card gave " + (r ? "impossible numbers" : "an error") + ", finished on the processor"; r = await ses.cpuDec.run(feeds()); }
+        if (!ses.gpuChecked) {
+          // same points on the processor: the outlines must agree, or the rest of the run stays on the processor
+          const c = await ses.cpuDec.run(feeds()), a = r.low_res_masks.data, b = c.low_res_masks.data;
+          // compared where either outlines something (most of an outline picture is empty, so a blank answer would
+          // otherwise look like agreement)
+          let both = 0, either = 0; for (let i = 0; i < b.length; i++) { const x = a[i] > 0, y = b[i] > 0; if (x || y) { either++; if (x && y) both++; } }
+          let di = 0; for (let i = 0; i < c.iou.data.length; i++) di = Math.max(di, Math.abs(c.iou.data[i] - r.iou.data[i]));
+          const agree = either ? both / either : 1;
+          const ok = a.length === b.length && agree > 0.97 && di < 0.05;
+          ses.gpuChecked = true; ses.gpuNote = (ses.gpuNote && !ok ? ses.gpuNote + "; " : "") + "outlined pixels agreeing " + (100 * agree).toFixed(2) + "%, largest score difference " + di.toFixed(3);
+          if (!ok) { ses.dec = ses.cpuDec; ses.gpu = false; r = c; }
+        }
         const low = r.low_res_masks.data, iou = r.iou.data, L = FinderCore.LOW * FinderCore.LOW;
         for (let k = 0; k < iou.length; k++) if (iou[k] > 0.7) { const l = low.slice(k * L, (k + 1) * L); if (FinderCore.stability(l, 1) >= 0.85) cands.push({ low: l, iou: iou[k] }); }
       }
       const t2 = performance.now();
-      return { masks: FinderCore.keepOutlines(cands, ph.iw, ph.ih), encMs: t1 - t0, decMs: t2 - t1 };
+      // for the checks: an outline step that finds nothing
+      if (ses.noOutlines) cands.length = 0;
+      const masks = FinderCore.keepOutlines(cands, ph.iw, ph.ih);
+      return { masks, encMs: t1 - t0, decMs: t2 - t1, cleanMs: performance.now() - t2 };
     }
+    // every answer carries the number of the message it answers (rid)
+    const post = (m, d, tr) => { d.rid = m.rid; self.postMessage(d, tr || []); };
     self.onmessage = async ev => {
       const m = ev.data;
       try {
@@ -2550,72 +2682,162 @@ const ModelIO = (() => {
           ort.env.wasm.numThreads = m.threads;
           const opts = { executionProviders: ["wasm"], graphOptimizationLevel: "all" };
           const enc = await ort.InferenceSession.create(bytes(m.enc), opts);
+          // the photo step (the heavier half) on the graphics card too, where the browser allows it
+          let gEnc = null;
+          // (only with a copy of the photo model made for graphics cards: the 8-bit one mostly runs on the processor there)
+          if (m.gpu && m.encGpu && self.navigator && navigator.gpu) { try { gEnc = await ort.InferenceSession.create(bytes(m.encGpu), { executionProviders: ["webgpu"], graphOptimizationLevel: "all" }); } catch (e) { gEnc = null; } }
+          // for the checks: a stand-in graphics card whose photo step answers are all wrong
+          if (m.fakeBadEnc) gEnc = { run: async f => { const r = await enc.run(f); r.image_embed.data.fill(0.5); return r; } };
           // the outline step runs hundreds of times a photo: on the graphics card where the browser allows it
           let dec = null, gpu = false;
+          const cpuDec = await ort.InferenceSession.create(bytes(m.dec), opts);
           if (m.gpu && self.navigator && navigator.gpu) { try { dec = await ort.InferenceSession.create(bytes(m.dec), { executionProviders: ["webgpu"], graphOptimizationLevel: "all" }); gpu = true; } catch (e) { dec = null; } }
-          if (!dec) dec = await ort.InferenceSession.create(bytes(m.dec), opts);
-          ses = { enc, dec };
-          self.postMessage({ type: "ready", gpu });
+          // for the checks: a stand-in graphics card whose outlines are all wrong
+          // and one that is right at first, then gives impossible numbers
+          if (m.fakeNanGpu) { let calls = 0; dec = { run: async f => { const r = await cpuDec.run(f); if (calls++ > 0) r.iou.data.fill(NaN); return r; } }; gpu = true; }
+          if (m.fakeBadGpu) { dec = { run: async f => { const r = await cpuDec.run(f); r.low_res_masks.data.fill(-5); return r; } }; gpu = true; }
+          // the graphics card's answers are checked against the processor's on the first photo (gpuChecked)
+          // the graphics card runs the test picture first; if it misses a disc, everything stays on the processor
+          let canaryNote = "";
+          if (m.canaryCpu) canaryNote = "test picture on the processor: discs found " + (100 * await canary(enc, cpuDec)).toFixed(1) + "%";
+          if ((gEnc && !m.fakeBadEnc) || (gpu && !m.fakeBadGpu && !m.fakeNanGpu) || m.fakeCanary) {
+            let q = 0; const gd = m.fakeCanary ? { run: async f => { const r = await cpuDec.run(f); r.low_res_masks.data.fill(-5); return r; } } : (gpu ? dec : cpuDec);
+            try { q = await canary(gEnc || enc, gd); } catch (err) { q = 0; }
+            canaryNote += (canaryNote ? "; " : "") + "test picture on the graphics card: discs found " + (100 * q).toFixed(1) + "%";
+            if (!(q > 0.9)) { gEnc = null; dec = null; gpu = false; canaryNote += ", so the processor does it all"; }
+          }
+          ses = { enc: gEnc || enc, cpuEnc: enc, encGpu: !!gEnc, encChecked: !gEnc, encNote: "", dec: dec || cpuDec, cpuDec, gpu, gpuChecked: !gpu, gpuNote: "", noOutlines: !!m.noOutlines };
+          post(m, { type: "ready", gpu, encGpu: !!gEnc, canaryNote });
         } else if (m.type === "start") {
           // very dense models (over 400,000 faces) work on small patches of faces, about 100,000 patches in all
           const fEdges = FinderCore.edgePairs(m.idx, m.F), k = m.patch || (m.F > 400000 ? Math.ceil(m.F / 100000) : 1);
           const P = k > 1 ? FinderCore.facePatches(fEdges, m.F, k) : null, U = P ? P.n : m.F;
           const edges = P ? FinderCore.patchEdges(fEdges, P.patch, U) : fEdges;
           job = { F: m.F, U, map: P ? P.patch : null, scale: m.F / U, edges, batch: m.batch, evs: [FinderCore.newEvidence(edges), FinderCore.newEvidence(edges)] };
-          self.postMessage({ type: "started", patches: P ? U : 0 });
-        } else if (m.type === "photo") {
-          const r = await outline(m.photo), ids = m.photo.ids, map = job.map;
+          post(m, { type: "started", patches: P ? U : 0 });
+        } else if (m.type === "outline") {
+          // the outlines of one photo (any worker); the photo's face numbers go back with them
+          // (the graphics card's outlines are checked again every eighth photo)
+          ses.photos = (ses.photos || 0) + 1;
+          if (ses.gpu && ses.photos % 8 === 0) ses.gpuChecked = false;
+          if (m.photo.raw) {
+            // turn the pixels round (rows top down) and the colours of the face picture into face numbers
+            const ph = m.photo, W = ph.w, H = ph.h, IW = ph.iw, IH = ph.ih, buf = ph.rgb, ibuf = ph.ids;
+            const rgb = new Uint8Array(W * H * 4); for (let y = 0; y < H; y++) rgb.set(buf.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);
+            const ids = new Int32Array(IW * IH);
+            for (let y = 0; y < IH; y++) { const r = (IH - 1 - y) * IW * 4; for (let x = 0; x < IW; x++) { const p = r + x * 4; ids[y * IW + x] = (ibuf[p] | (ibuf[p + 1] << 8) | (ibuf[p + 2] << 16)) - 1; } }
+            m.photo = { rgb, ids, w: W, h: H, iw: IW, ih: IH };
+          }
+          const r = await outline(m.photo, m.batch), masks = r.masks, ids = m.photo.ids;
+          const tr = Array.from(new Set([ids.buffer].concat(masks.map(k => k.buffer))));
+          post(m, { type: "outlined", masks, ids, encMs: r.encMs, decMs: r.decMs, cleanMs: r.cleanMs, outlines: masks.length, gpu: ses.gpu, gpuNote: ses.gpuNote, encGpu: ses.encGpu, encNote: ses.encNote }, tr);
+        } else if (m.type === "lift") {
+          // one photo's outlines into the evidence (the first worker only, which holds the model's edges)
+          const tl = performance.now(), ids = m.ids, map = job.map;
           if (map) for (let p = 0; p < ids.length; p++) if (ids[p] >= 0) ids[p] = map[ids[p]];
-          FinderCore.liftPhoto(job.evs[m.set], ids, r.masks, job.U, 0.3);
-          self.postMessage({ type: "photo", encMs: r.encMs, decMs: r.decMs });
-        } else if (m.type === "finish") {
+          // what the photos of the model as it looks saw (faces, or patches)
+          if (m.set === 0) { const sn = job.seen || (job.seen = new Uint8Array(job.U)); for (let p = 0; p < ids.length; p++) if (ids[p] >= 0) sn[ids[p]] = 1; }
+          const used = FinderCore.liftPhoto(job.evs[m.set], ids, m.masks, job.U, 0.3);
+          post(m, { type: "lifted", used, liftMs: performance.now() - tl });
+        } else if (m.type === "finish" || m.type === "peek") {
           const { U, map, scale } = job;
-          let seen = m.seen;
-          if (map) { seen = new Uint8Array(U); for (let f = 0; f < job.F; f++) if (m.seen[f]) seen[map[f]] = 1; }
-          const merged = FinderCore.merge(FinderCore.combineMin(job.evs[0], job.evs[1]), U, 0.8, Math.max(1, Math.round(300 / scale)));
-          const pu = FinderCore.unseen(merged, seen, job.edges, U, Math.round(3000 / scale), Math.round(500 / scale));
-          const pieces = map ? Uint32Array.from(map, u => pu[u]) : Uint32Array.from(pu);
-          job = null;
-          self.postMessage({ type: "pieces", pieces }, [pieces.buffer]);
+          const seen = job.seen || new Uint8Array(U);
+          const comb = FinderCore.combineMin(job.evs[0], job.evs[1]);
+          let withEv = 0; for (let j = 0; j < comb.both.length; j++) if (comb.both[j] > 0) withEv++;
+          let pu, merged;
+          if (!withEv) {
+            // no outline said anything about any border: each connected part of the model is one piece (said so on screen)
+            const par = new Int32Array(U); for (let i = 0; i < U; i++) par[i] = i;
+            const find = x => { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; };
+            for (let j = 0; j < job.edges.fa.length; j++) { const a = find(job.edges.fa[j]), b = find(job.edges.fb[j]); if (a !== b) par[b] = a; }
+            pu = FinderCore.rankLabels(Int32Array.from(par, (v, i) => find(i)));
+          }
+          // five sizes of piece, from bigger to smaller (how sure the photos must be before two parts are joined);
+          // the middle one is used first. A small region joins a neighbour on its own only where some photo saw their
+          // border (no snowballing).
+          const LEVELS = [0.5, 0.6, 0.7, 0.8, 0.9], levels = [];
+          for (const thr of m.type === "peek" ? [0.7] : LEVELS) {
+            let lp = pu;
+            if (withEv) { const mg = FinderCore.merge(comb, U, thr, Math.max(1, Math.round(300 / scale)), { needEvidence: true }); if (thr === 0.7) merged = mg; lp = FinderCore.unseen(mg, seen, job.edges, U, Math.round(3000 / scale), Math.round(500 / scale)); }
+            levels.push(map ? Uint32Array.from(map, u => lp[u]) : Uint32Array.from(lp));
+          }
+          if (withEv) pu = null;
+          const pieces = levels[levels.length === 1 ? 0 : 2].slice();
+          if (m.type === "peek") levels.length = 0;
+          // a few numbers for finding out why a run came out badly
+          const ev = job.evs[0];
+          let nSeen = 0; for (let u = 0; u < U; u++) if (seen[u]) nSeen++;
+          const count = a => { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] + 1 > n) n = a[i] + 1; return n; };
+          const stats = { units: U, edges: ev.both.length, edgesWithEvidence: withEv, noEvidence: !withEv, unitsSeen: nSeen, afterMerge: merged ? count(merged) : count(pu), afterUnseen: count(pieces) };
+          // peek: early pieces from the photos so far; the run goes on
+          if (m.type === "finish") job = null;
+          post(m, { type: "pieces", pieces, levels, stats }, [pieces.buffer].concat(levels.map(l => l.buffer)));
         }
-      } catch (e) { self.postMessage({ type: "error", message: (e && e.message) || String(e) }); }
+      } catch (e) { post(m, { type: "error", message: (e && e.message) || String(e) }); }
     };
   }
-  // one message to the worker and its answer (the worker answers each message in turn)
-  function finderAsk(msg, transfer) {
+  // one message to a worker and its answer, matched by number (a worker can have several messages waiting)
+  function finderCall(w, msg, transfer) {
     return new Promise((res, rej) => {
-      const w = Finder.worker;
-      w.onmessage = e => { if (e.data.type === "error") rej(new Error(e.data.message)); else res(e.data); };
-      w.onerror = e => { e.preventDefault && e.preventDefault(); rej(new Error((e && e.message) || "the piece finder stopped")); };
-      Finder.reject = rej;
-      w.postMessage(msg, transfer || []);
+      const rid = Finder.rid = (Finder.rid || 0) + 1;
+      Finder.pending.set(rid, { res, rej });
+      msg.rid = rid; w.postMessage(msg, transfer || []);
     });
+  }
+  function finderAsk(msg, transfer) { return finderCall(Finder.worker, msg, transfer); }
+  function finderFailAll(err) { const p = Array.from(Finder.pending.values()); Finder.pending.clear(); p.forEach(x => x.rej(err)); }
+  function newFinderWorker() {
+    const w = new Worker(URL.createObjectURL(new Blob(["(" + finderWorkerMain.toString() + ")();"], { type: "text/javascript" })));
+    w.onmessage = e => { const p = Finder.pending.get(e.data.rid); if (!p) return; Finder.pending.delete(e.data.rid); if (e.data.type === "error") p.rej(new Error(e.data.message)); else p.res(e.data); };
+    w.onerror = e => { e.preventDefault && e.preventDefault(); finderFailAll(new Error((e && e.message) || "the piece finder stopped")); };
+    return w;
+  }
+  // how many finders work side by side: every core but one, at most 4, and no more than the memory allows (about
+  // 2 GB each); each one runs on its own core, which also works when the tool is opened from disk
+  function finderLanes() {
+    if (window.__finderWorkers) return window.__finderWorkers;
+    const cores = navigator.hardwareConcurrency || 2, mem = navigator.deviceMemory || 4;
+    return Math.max(1, Math.min(cores - 1, 4, Math.floor(mem / 2)));
   }
   // the runtime and model, loaded once per visit
   async function loadFinder(note) {
     if (Finder.worker && Finder.ready) return;
     if (Finder.loading) return Finder.loading;
     Finder.loading = (async () => {
-      const files = window.FinderModel.files, A = window.FinderAssets || {};
+      const files = window.FinderModel.files;
       for (let i = 0; i < files.length; i++) {
         const key = { "ort_js.js": "ort", "ort_glue.js": "glue", "ort_wasm.js": "wasm", "sam_enc.js": "enc", "sam_dec.js": "dec" }[files[i]];
         if (key && window.FinderAssets && window.FinderAssets[key]) continue;
         note("Loading the piece finder (" + (i + 1) + " of " + files.length + ")…"); await loadScript("finder/model/" + files[i]);
       }
+      // the 16-bit photo model for graphics cards: only where the card can run 16-bit numbers
+      const gf = window.FinderModel.gpuFiles || [];
+      if (gf.length && !window.__noGpu && navigator.gpu && !(window.FinderAssets && window.FinderAssets.encGpu)) {
+        let f16 = false; try { const ad = await navigator.gpu.requestAdapter(); f16 = !!ad && ad.features.has("shader-f16"); } catch (e) {}
+        if (f16) for (const g of gf) { note("Loading the graphics card part of the piece finder…"); try { await loadScript("finder/model/" + g); } catch (e) {} }
+      }
       note("Starting the piece finder…");
       const B = window.FinderAssets;
-      Finder.worker = new Worker(URL.createObjectURL(new Blob(["(" + finderWorkerMain.toString() + ")();"], { type: "text/javascript" })));
-      // every core but one (so painting stays smooth), where the page is served with the headers that allow it
-      const threads = window.crossOriginIsolated ? Math.min(8, Math.max(1, (navigator.hardwareConcurrency || 2) - 1)) : 1;
-      const r = await finderAsk({ type: "init", ort: B.ort, glue: B.glue, wasm: B.wasm, enc: B.enc, dec: B.dec, core: FinderCore.source, threads, gpu: !window.__noGpu });
-      Finder.gpu = r.gpu; Finder.threads = threads; Finder.ready = true;
+      // the model files are turned from text into bytes once, here, and each finder gets a copy of the bytes
+      const dec64 = t => { const bin = atob(t), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; };
+      if (!Finder.bin) Finder.bin = { wasm: dec64(B.wasm), enc: dec64(B.enc), dec: dec64(B.dec), encGpu: B.encGpu ? dec64(B.encGpu) : null };
+      const lanes = finderLanes(), cores = navigator.hardwareConcurrency || 2;
+      // threads inside each finder where the page is served with the headers that allow it
+      const threads = window.crossOriginIsolated ? Math.max(1, Math.min(8, Math.floor((cores - 1) / lanes))) : 1;
+      Finder.pending = Finder.pending || new Map();
+      Finder.workers = Array.from({ length: lanes }, newFinderWorker); Finder.worker = Finder.workers[0];
+      const bin = Finder.bin, init = { type: "init", ort: B.ort, glue: B.glue, wasm: bin.wasm, enc: bin.enc, dec: bin.dec, core: FinderCore.source, threads, gpu: !window.__noGpu, fakeBadGpu: !!window.__fakeBadGpu, fakeNanGpu: !!window.__fakeNanGpu, fakeBadEnc: !!window.__fakeBadEnc, fakeCanary: !!window.__fakeCanary, canaryCpu: !!window.__canaryCpu, noOutlines: !!window.__noOutlines, encGpu: bin.encGpu || (window.__gpuEnc ? bin.enc : null) };
+      // the first starts alone (so a failure is quick to show), then the rest together
+      const r = await finderCall(Finder.workers[0], Object.assign({}, init));
+      await Promise.all(Finder.workers.slice(1).map(w => finderCall(w, Object.assign({}, init))));
+      Finder.gpu = r.gpu; Finder.canaryNote = r.canaryNote; Finder.threads = threads; Finder.lanes = lanes; Finder.ready = true;
     })();
     try { return await Finder.loading; } catch (e) { stopFinderWorker(); throw e; } finally { Finder.loading = null; }
   }
   function stopFinderWorker() {
-    if (Finder.worker) Finder.worker.terminate();
-    Finder.worker = null; Finder.ready = false;
-    if (Finder.reject) { const r = Finder.reject; Finder.reject = null; r(new Error("cancelled")); }
+    (Finder.workers || []).forEach(w => w.terminate());
+    Finder.workers = []; Finder.worker = null; Finder.ready = false;
+    if (Finder.pending) finderFailAll(new Error("cancelled"));
   }
   function fmtMinutes(ms) { const m = Math.round(ms / 60000); return m < 1 ? "under a minute" : m === 1 ? "about a minute" : "about " + m + " minutes"; }
   function finderNote(text, frac) {
@@ -2629,40 +2851,72 @@ const ModelIO = (() => {
     // the run belongs to this model: other models can be opened meanwhile, and the pieces are kept for this one
     const F = S.nFaces, mesh0 = S.fig.cloth.meshId, name0 = S.fig.name || "this model", t0 = performance.now();
     const here = () => !!S.fig && S.fig.cloth.meshId === mesh0;
-    Finder.model = "\u201c" + name0 + "\u201d";
+    const quick = $("findQuick").checked || !!window.__finderQuick;
+    Finder.model = "\u201c" + name0 + "\u201d"; Finder.outlines = null; Finder.stats = null;
     try {
       await loadFinder(t => finderNote(t, 0));
       if (Finder.cancel) throw new Error("cancelled");
-      finderNote("Taking photos of the model…", 0);
-      await new Promise(res => setTimeout(res, 30));
-      const sets = [takePhotos(false), takePhotos(true)];
-      const seen = new Uint8Array(F);
-      for (const ph of sets[0]) for (let p = 0; p < ph.ids.length; p++) if (ph.ids[p] >= 0) seen[ph.ids[p]] = 1;
+      const nViews = photoViews(quick).length, total = 2 * nViews;
       const st = await finderAsk({ type: "start", idx: S.idx, F, batch: Finder.gpu ? 64 : 16, patch: window.__finderPatch || 0 });
       Finder.patches = st.patches;
-      const total = sets[0].length + sets[1].length; let done = 0; const tStart = performance.now();
-      Finder.times = { enc: 0, dec: 0 };
-      for (let si = 0; si < 2; si++) {
-        const set = sets[si];
-        while (set.length) {
-          const left = done ? (performance.now() - tStart) / done * (total - done) : 0;
-          finderNote((here() ? "Finding outlines: " : "Finding outlines for " + Finder.model + ": ") + "photo " + (done + 1) + " of " + total + (done ? ", " + fmtMinutes(left) + " left" : "") + ". You can keep painting." , done / total);
-          // each photo goes to the worker as it is (no copy) and is let go here
-          const ph = set.shift();
-          const r = await finderAsk({ type: "photo", set: si, photo: ph }, [ph.rgb.buffer, ph.ids.buffer]);
-          Finder.times.enc += r.encMs; Finder.times.dec += r.decMs;
-          done++;
+      let done = 0, next = 0, peeked = false; const tStart = performance.now();
+      Finder.times = { photos: 0, enc: 0, dec: 0, clean: 0, lift: 0 };
+      const note = () => { const left = done ? (performance.now() - tStart) / done * (total - done) : 0;
+        finderNote((here() ? "Finding outlines: " : "Finding outlines for " + Finder.model + ": ") + "photo " + Math.min(total, done + 1) + " of " + total + (done ? ", " + fmtMinutes(left) + " left" : "") + ". You can keep painting.", done / total); };
+      note();
+      // lifts go to the first finder one after another
+      let liftChain = Promise.resolve();
+      // each finder takes the next photo (taken just when it is needed, so few photos are held at once), outlines it,
+      // and hands the outlines on to be added up
+      openPhotoKit();
+      // the first photo of each kind is taken before the outlines start (the first takes longest: the graphics card
+      // gets ready for it)
+      finderNote("Taking photos of the model…", 0);
+      await new Promise(res => setTimeout(res, 30));
+      const early = new Map([[0, takePhotos(false, quick, [0], true)[0]], [nViews, takePhotos(true, quick, [0], true)[0]]]);
+      await new Promise(res => setTimeout(res, 30));
+      note();
+      const lane = async w => {
+        while (next < total) {
+          if (Finder.cancel) throw new Error("cancelled");
+          const k = next++, si = k < nViews ? 0 : 1, vi = k % nViews;
+          const t0p = performance.now(), ph = early.get(k) || await takePhotoRaw(si === 1, quick, vi);
+          early.delete(k);
+          Finder.times.photos += performance.now() - t0p; Finder.times.photoMax = Math.max(Finder.times.photoMax || 0, performance.now() - t0p);
+          const r = await finderCall(w, { type: "outline", photo: ph, batch: Finder.gpu ? 64 : 16 }, [ph.rgb.buffer, ph.ids.buffer]);
+          Finder.times.enc += r.encMs; Finder.times.dec += r.decMs; Finder.times.clean += r.cleanMs;
+          if (w === Finder.worker) { Finder.gpu = r.gpu; Finder.gpuNote = r.gpuNote; Finder.encGpu = r.encGpu; Finder.encNote = r.encNote; }
+          else if (!r.gpu) Finder.gpu = Finder.gpu && false;
+          const l = liftChain.then(() => finderCall(Finder.worker, { type: "lift", set: si, ids: r.ids, masks: r.masks }, Array.from(new Set([r.ids.buffer].concat(r.masks.map(m => m.buffer))))));
+          liftChain = l.catch(() => {});
+          const lr = await l;
+          Finder.times.lift += lr.liftMs;
+          (Finder.outlines = Finder.outlines || []).push([r.outlines, lr.used]);
+          done++; note();
+          // early pieces: once a quarter of the photos are in (on runs of 16 photos or more), so Fill can start
+          if (!peeked && (window.__peekAt ? done >= window.__peekAt : total >= 16 && done >= total / 4) && here() && !S.pieces) {
+            peeked = true;
+            liftChain = liftChain.then(async () => { const pk = await finderCall(Finder.worker, { type: "peek" }); if (here() && Finder.busy && !Finder.cancel) { usePieces(pk.pieces); toast("First pieces are ready to use; they get better as the finder carries on.", 5000); } }).catch(() => {});
+          }
         }
-      }
+      };
+      try { await Promise.all(Finder.workers.map(lane)); } finally { closePhotoKit(); }
+      await liftChain;
       finderNote("Joining outlines into pieces…", 1);
-      const pieces = (await finderAsk({ type: "finish", seen }, [seen.buffer])).pieces;
+      const fin = await finderAsk({ type: "finish" }), pieces = fin.pieces;
+      $("copyFinderReport").hidden = false;
+      Finder.stats = Object.assign({ outlines: Finder.outlines, gpu: Finder.gpu, gpuCheck: Finder.gpuNote, encGpu: Finder.encGpu, encCheck: Finder.encNote, canary: Finder.canaryNote, quick: !!quick }, fin.stats); Finder.outlines = null;
       const count = new Set(pieces).size, took = fmtMinutes(performance.now() - t0).replace("about ", "");
+      // no outline split anything: the pieces are just the model's separate parts, and the message says so
+      const noEv = Finder.stats.noEvidence ? " No outline in any photo split this model, so each separate part of it is one piece. If you can see pieces that should be apart, please send this message to the tool's maker." : "";
+      const levels = fin.levels && fin.levels.length === 5 ? fin.levels : null;
       const d = { format: "paint-to-cut-pieces", version: 1, model: name0, meshId: mesh0, nFaces: F, count, pieces: CutCore.bytesToB64(new Uint8Array(pieces.buffer)) };
+      if (levels) { d.levels = levels.map(l => CutCore.bytesToB64(new Uint8Array(l.buffer))); d.level = 2; }
       try { await LocalStore.set("pieces:" + mesh0, d); } catch (e) {}
-      if (!here()) { toast(count + (count === 1 ? " piece" : " pieces") + " found for " + Finder.model + " in " + took + ". They are there when you open that model again.", 9000); return; }
-      usePieces(pieces);
+      if (!here()) { toast(count + (count === 1 ? " piece" : " pieces") + " found for " + Finder.model + " in " + took + ". They are there when you open that model again." + noEv, 9000); return; }
+      usePieces(pieces, levels, 2);
       $("pieceFill").checked = true; S.pieceFill = true;
-      toast(d.count + (d.count === 1 ? " piece" : " pieces") + " found in " + fmtMinutes(performance.now() - t0).replace("about ", "") + ". With Fill, one click now takes a whole piece. File > Save found pieces keeps them as a file.", 9000);
+      toast(d.count + (d.count === 1 ? " piece" : " pieces") + " found in " + fmtMinutes(performance.now() - t0).replace("about ", "") + ". With Fill, one click now takes a whole piece. File > Save found pieces keeps them as a file." + noEv, noEv ? 15000 : 9000);
     } catch (e) {
       const m = (e && e.message) || String(e);
       toast(m === "cancelled" ? "Finding pieces stopped." : "The piece finder could not finish (" + m + ").", 7000);
@@ -2670,9 +2924,65 @@ const ModelIO = (() => {
       Finder.busy = false; $("finding").hidden = true; $("findPieces").disabled = false; $("findPiecesBtn").disabled = false;
     }
   }
+  // what the last run did (no model data): for pasting into a message when a run went wrong
+  function finderReport() {
+    return JSON.stringify({ tool: "MeshShears piece finder", when: new Date().toISOString(), model: Finder.model, faces: S.nFaces,
+      threads: Finder.threads, patches: Finder.patches, quick: Finder.stats && Finder.stats.quick, times: Finder.times, stats: Finder.stats,
+      runtime: window.FinderModel && window.FinderModel.runtime, isolated: !!window.crossOriginIsolated, cores: navigator.hardwareConcurrency,
+      memoryGB: navigator.deviceMemory, webgpu: !!navigator.gpu, browser: navigator.userAgent }, null, 1);
+  }
+  async function copyFinderReport() {
+    const t = finderReport();
+    try { await navigator.clipboard.writeText(t); toast("The piece finder report is copied. Paste it into your message."); }
+    catch (e) { await offerFile("piece_finder_report.txt", new Blob([t], { type: "text/plain" })); }
+  }
   function piecesData() {
     const pc = Uint32Array.from(S.pieces), u8 = new Uint8Array(pc.buffer);
-    return { format: "paint-to-cut-pieces", version: 1, model: S.fig.name, meshId: S.fig.cloth.meshId, nFaces: S.nFaces, count: new Set(pc).size, pieces: CutCore.bytesToB64(u8) };
+    const d = { format: "paint-to-cut-pieces", version: 1, model: S.fig.name, meshId: S.fig.cloth.meshId, nFaces: S.nFaces, count: new Set(pc).size, pieces: CutCore.bytesToB64(u8) };
+    if (S.pieceLevels) { d.levels = S.pieceLevels.map(l => CutCore.bytesToB64(new Uint8Array(l.buffer, l.byteOffset, l.length * 4))); d.level = S.pieceLevel; }
+    return d;
+  }
+  // the piece size slider, and splitting or joining pieces by clicking them (changes are kept in the browser)
+  function keepPieces() { try { LocalStore.set("pieces:" + S.fig.cloth.meshId, piecesData()); } catch (e) {} }
+  function setPieceLevel(i) {
+    if (!S.pieceLevels || !S.pieceLevels[i]) return;
+    usePieces(S.pieceLevels[i].slice(), S.pieceLevels, i); keepPieces();
+    toast(new Set(S.pieces).size + " pieces. Splits and joins you made are replaced at a new size.", 3500);
+  }
+  function pieceCount() { let n = 0; for (const v of S.pieces) if (v + 1 > n) n = v + 1; return n; }
+  // split: the clicked piece is cut into the parts it has at the next smaller size
+  function splitPieceAt(f) {
+    if (!S.pieces || f < 0) return 0;
+    const p = S.pieces[f], fine = S.pieceLevels && S.pieceLevels[Math.min(4, S.pieceLevel + 1)];
+    if (!fine) { toast("These pieces have no smaller size to split into. Find pieces again to get sizes."); return 0; }
+    const base = pieceCount(), map = new Map();
+    for (let g = 0; g < S.nFaces; g++) if (S.pieces[g] === p) { const k = fine[g]; if (!map.has(k)) map.set(k, map.size === 0 ? p : base + map.size - 1); S.pieces[g] = map.get(k); }
+    usePieces(S.pieces, S.pieceLevels, S.pieceLevel); keepPieces();
+    toast(map.size > 1 ? "Split into " + map.size + " pieces." : "That piece has no smaller parts. Try a smaller piece size.", 3000);
+    return map.size;
+  }
+  // join: the second clicked piece becomes part of the first
+  function joinPieces(fa, fb) {
+    if (!S.pieces || fa < 0 || fb < 0) return false;
+    const a = S.pieces[fa], b = S.pieces[fb]; if (a === b) return false;
+    for (let g = 0; g < S.nFaces; g++) if (S.pieces[g] === b) S.pieces[g] = a;
+    usePieces(S.pieces, S.pieceLevels, S.pieceLevel); keepPieces(); toast("Joined into one piece.", 2500);
+    return true;
+  }
+  function armPieceMode(mode) {
+    S.pieceMode = S.pieceMode && S.pieceMode.kind === mode ? null : { kind: mode, first: -1 };
+    if (S.pieceMode) { $("showPieces").checked = true; markUniforms.uShowPieces.value = 1; requestRender(); }
+    $("splitPiece").classList.toggle("on", !!S.pieceMode && mode === "split"); $("joinPieces").classList.toggle("on", !!S.pieceMode && mode === "join");
+    if (S.pieceMode) toast(mode === "split" ? "Click the piece to split." : "Click the piece to keep, then the piece to join to it.", 4000);
+  }
+  // a click while splitting or joining: true when it was used
+  function pieceModeClick(f) {
+    const m = S.pieceMode; if (!m) return false;
+    if (m.kind === "split") { splitPieceAt(f); }
+    else if (m.first < 0) { m.first = f; toast("Now click the piece to join to it.", 3000); return true; }
+    else { joinPieces(m.first, f); }
+    S.pieceMode = null; $("splitPiece").classList.remove("on"); $("joinPieces").classList.remove("on");
+    return true;
   }
   async function savePiecesFile() {
     if (!S.pieces) { toast("This model has no found pieces yet."); return; }
@@ -2682,6 +2992,7 @@ const ModelIO = (() => {
   $("findPieces").addEventListener("click", () => { closeMenu(); findPieces(); });
   $("findPiecesBtn").addEventListener("click", () => findPieces());
   $("savePiecesFile").addEventListener("click", () => { closeMenu(); savePiecesFile(); });
+  $("copyFinderReport").addEventListener("click", () => { closeMenu(); copyFinderReport(); });
   $("findCancel").addEventListener("click", () => { Finder.cancel = true; finderNote("Stopping…"); stopFinderWorker(); });
 
   /* ---------- hooks for the automated checks ---------- */
@@ -2750,7 +3061,10 @@ const ModelIO = (() => {
       clonePairs: () => Array.from(clonePairs()),
       // the piece finder
       findPieces: () => findPieces(),
-      finder: () => ({ busy: Finder.busy, gpu: Finder.gpu, threads: Finder.threads || 0, patches: Finder.patches || 0, times: Finder.times || null, worker: !!Finder.worker, available: finderAvailable(), pieces: S.pieces ? new Set(S.pieces).size : 0, text: $("findText").textContent }),
+      finderReport: () => finderReport(),
+      pieceLevel: i => setPieceLevel(i), splitPieceAt: f => splitPieceAt(f), joinPieces: (a, b) => joinPieces(a, b), pieceModeClick: f => pieceModeClick(f), armPieceMode: m => armPieceMode(m),
+      photoViews: quick => photoViews(quick).map(v => v.join(",")),
+      finder: () => ({ stats: Finder.stats || null, busy: Finder.busy, gpu: Finder.gpu, threads: Finder.threads || 0, patches: Finder.patches || 0, times: Finder.times || null, worker: !!Finder.worker, lanes: Finder.lanes || 0, available: finderAvailable(), pieces: S.pieces ? new Set(S.pieces).size : 0, text: $("findText").textContent }),
       cancelFind() { Finder.cancel = true; stopFinderWorker(); },
       localGet: k => LocalStore.get(k),
       piecesFile: () => S.pieces ? piecesData() : null,

@@ -137,7 +137,8 @@
     maxfrac = maxfrac == null ? 0.3 : maxfrac;
     const npx = new Int32Array(F); let figpix = 0;
     for (let p = 0; p < ids.length; p++) if (ids[p] >= 0) { npx[ids[p]]++; figpix++; }
-    const lo = new Uint32Array(F), hi = new Uint32Array(F), inm = new Int32Array(F);
+    // which kept outlines hold each face: up to 124 outlines, 31 to a word (the first two words as before)
+    const W = 4, words = Array.from({ length: W }, () => new Uint32Array(F)), inm = new Int32Array(F);
     let nm = 0;
     for (const m of masks) {
       let on = 0, tot = 0;
@@ -146,16 +147,17 @@
       if (tot > maxfrac * figpix) continue;             // covers most of the model
       inm.fill(0);
       for (let p = 0; p < ids.length; p++) if (m[p] && ids[p] >= 0) inm[ids[p]]++;
-      const bit = nm < 31 ? 1 << nm : 1 << (nm - 31), arr = nm < 31 ? lo : hi;
+      const bit = 1 << (nm % 31), arr = words[Math.floor(nm / 31)];
       for (let f = 0; f < F; f++) if (inm[f] * 2 > Math.max(npx[f], 1)) arr[f] |= bit;
-      nm++; if (nm === 62) break;
+      nm++; if (nm === 31 * W) break;
     }
-    const { fa, fb, same, both } = ev;
+    const { fa, fb, same, both } = ev, used = Math.ceil(nm / 31);
     for (let j = 0; j < fa.length; j++) {
       const a = fa[j], b = fb[j];
       if (!npx[a] || !npx[b]) continue;
-      const ol = lo[a] | lo[b], oh = hi[a] | hi[b]; if (!ol && !oh) continue;
-      const con = popcount(ol) + popcount(oh), sep = popcount(lo[a] ^ lo[b]) + popcount(hi[a] ^ hi[b]);
+      let con = 0, sep = 0;
+      for (let w = 0; w < used; w++) { const x = words[w][a], y = words[w][b]; con += popcount(x | y); sep += popcount(x ^ y); }
+      if (!con) continue;
       same[j] += con - sep; both[j] += con;
     }
     return nm;
@@ -182,8 +184,12 @@
   Heap.prototype.less = function (x, y) { return x[0] > y[0] || (x[0] === y[0] && (x[1] < y[1] || (x[1] === y[1] && x[2] < y[2]))); };
   Heap.prototype.push = function (x) { const h = this.h; h.push(x); let i = h.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (!this.less(h[i], h[p])) break; [h[i], h[p]] = [h[p], h[i]]; i = p; } };
   Heap.prototype.pop = function () { const h = this.h, top = h[0], last = h.pop(); if (h.length) { h[0] = last; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < h.length && this.less(h[l], h[m])) m = l; if (r < h.length && this.less(h[r], h[m])) m = r; if (m === i) break; [h[i], h[m]] = [h[m], h[i]]; i = m; } } return top; };
-  function merge(ev, F, thr, minsize) {
+  // opts.needEvidence: a small region only joins a neighbour on its own when some photo saw their border; small regions
+  // with no evidence at all wait until the end and then join the big piece they share the longest border with (so
+  // without evidence nothing snowballs into one piece)
+  function merge(ev, F, thr, minsize, opts) {
     thr = thr == null ? 0.8 : thr; minsize = minsize == null ? 300 : minsize;
+    const needEv = !!(opts && opts.needEvidence);
     const { fa, fb, same, both } = ev;
     // 1. tiny seeds: faces joined only where every photo that saw both agreed, seen at least twice
     const p = new Int32Array(F); for (let i = 0; i < F; i++) p[i] = i;
@@ -209,15 +215,34 @@
       const [sc, a, b] = heap.pop();
       if (!(alive[a] && alive[b]) || !nb[a].has(b) || Math.abs(score(nb[a].get(b)) - sc) > 1e-9) continue;
       if (sc < thr && Math.min(size[a], size[b]) >= minsize) continue;
+      if (needEv && sc < thr && !(nb[a].get(b)[1] > 0)) continue;
+      join(a, b, true);
+    }
+    function join(a, b, requeue) {
       alive[b] = 0; par[b] = a; size[a] += size[b];
       nb[a].delete(b); nb[b].delete(a);
       for (const [c, e] of Array.from(nb[b])) {
         nb[c].delete(b);
         if (nb[a].has(c)) { const ea = nb[a].get(c); ea[0] += e[0]; ea[1] += e[1]; ea[2] += e[2]; }
         else { nb[a].set(c, e); nb[c].set(a, e); }
-        heap.push([score(nb[a].get(c)), Math.min(a, c), Math.max(a, c)]);
+        if (requeue) heap.push([score(nb[a].get(c)), Math.min(a, c), Math.max(a, c)]);
       }
       nb[b] = new Map();
+    }
+    if (needEv) {
+      // the small regions left (no photo saw their border): each joins the big neighbour it shares the longest border
+      // with, smallest first, repeated while any can; one that only touches small regions stays as it is
+      for (let changed = true; changed;) {
+        changed = false;
+        const small = []; for (let a = 0; a < n; a++) if (alive[a] && size[a] < minsize) small.push(a);
+        small.sort((x, y) => size[x] - size[y] || x - y);
+        for (const a of small) {
+          if (!alive[a] || size[a] >= minsize) continue;
+          let best = -1, bl = -1;
+          for (const [c, e] of nb[a]) if (alive[c] && size[c] >= minsize && (e[2] > bl || (e[2] === bl && c < best))) { best = c; bl = e[2]; }
+          if (best >= 0) { join(best, a, false); changed = true; }
+        }
+      }
     }
     const top = x => { while (par[x] !== x) x = par[x]; return x; };
     const lab = new Int32Array(F); for (let i = 0; i < F; i++) lab[i] = top(comp[i]);
@@ -292,7 +317,35 @@
     return { fa: Uint32Array.from(fa), fb: Uint32Array.from(fb) };
   }
 
-  const api = { LOW, stability, nms, upsample, smallRegions, keepOutlines, gridPoints, edgePairs, newEvidence, liftPhoto, combineMin, merge, unseen, rankLabels, facePatches, patchEdges };
+  /* ---------- clues from the model itself ---------- */
+  // per edge: crease (signed bend between the two faces in radians, positive where the surface folds inwards, as in a
+  // seam or where a sleeve meets the arm) and colour step (difference of the texture colours, CIE Lab)
+  function edgeCues(edges, nrm, cen, lab) {
+    const { fa, fb } = edges, m = fa.length, crease = new Float32Array(m), dcol = new Float32Array(m);
+    for (let j = 0; j < m; j++) {
+      const a = fa[j] * 3, b = fb[j] * 3;
+      const dot = Math.max(-1, Math.min(1, nrm[a] * nrm[b] + nrm[a + 1] * nrm[b + 1] + nrm[a + 2] * nrm[b + 2]));
+      const side = (cen[b] - cen[a]) * nrm[a] + (cen[b + 1] - cen[a + 1]) * nrm[a + 1] + (cen[b + 2] - cen[a + 2]) * nrm[a + 2];
+      crease[j] = Math.acos(dot) * (side > 0 ? 1 : -1);
+      const dl = lab[a] - lab[b], da = lab[a + 1] - lab[b + 1], db = lab[a + 2] - lab[b + 2]; dcol[j] = Math.sqrt(dl * dl + da * da + db * db);
+    }
+    return { crease, dcol };
+  }
+  // the outline evidence with every edge's join chance (pj(j), 0..1) folded in: edges the photos agreed on stay seeds,
+  // every other edge counts as evidence with weight 1 + its photo count
+  // onlyUnseen: only the edges no photo said anything about get a chance from the clues
+  function cueEvidence(ev, edges, pj, onlyUnseen) {
+    const m = ev.both.length, same = new Float64Array(m), both = new Float64Array(m);
+    for (let j = 0; j < m; j++) {
+      const b0 = ev.both[j];
+      if (onlyUnseen && b0 > 0) { same[j] = ev.same[j]; both[j] = b0; continue; }
+      if (b0 >= 2 && ev.same[j] === b0) { same[j] = b0; both[j] = b0; continue; }
+      const w = 1 + b0; both[j] = w; same[j] = pj(j) * w;
+    }
+    return { fa: ev.fa, fb: ev.fb, same, both };
+  }
+
+  const api = { LOW, stability, nms, upsample, smallRegions, keepOutlines, gridPoints, edgePairs, newEvidence, liftPhoto, combineMin, merge, unseen, rankLabels, facePatches, patchEdges, edgeCues, cueEvidence };
   // the same code as text, for running it in a background worker
   api.source = "(" + finderCore.toString() + ")(self);";
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.FinderCore = api;

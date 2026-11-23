@@ -42,7 +42,8 @@ THE SOFTWARE.
   Apache License 2.0 (full text in `sam2_LICENSE.txt`). Changes made: the checkpoint `sam2.1_hiera_small.pt` was
   converted to ONNX in two parts (image encoder; point prompt encoder with mask decoder), the encoder simplified and
   its matrix weights stored as 8-bit numbers, then each file wrapped as base64 in a script file (`sam_enc.js`,
-  `sam_dec.js`) so the tool works when opened from disk.
+  `sam_dec.js`) so the tool works when opened from disk. A second copy of the encoder with its numbers stored as
+  16-bit floats, for graphics cards, is wrapped the same way in `sam_enc_gpu.js`.
 - **ONNX Runtime Web 1.20.1** (Microsoft, https://github.com/microsoft/onnxruntime), MIT licence (full text in
   `onnxruntime_LICENSE.txt`): `ort.webgpu.min.js` unchanged, wrapped as text in `ort_js.js`; its WebAssembly
   runtime and loader wrapped as base64 and text in `ort_wasm.js` and `ort_glue.js`, with one line of the loader changed so it can run from a blob address (the

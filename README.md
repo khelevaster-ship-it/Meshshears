@@ -21,7 +21,9 @@ a zip with each piece as its own `.glb`, still at the right size, the right way 
 
 There's also a piece finder. It takes photos of your model from 40 angles, works out where the outlines are, and
 splits the model into pieces for you, so Fill can grab a whole sleeve or boot in one click. It runs in the background
-while you keep painting.
+while you keep painting, and the first pieces show up about a quarter of the way in. Afterwards a slider makes the
+pieces bigger or smaller, and Split a piece / Join two pieces fix the odd one by hand. Tick Quick for a run with half
+the photos.
 
 And a clone brush, for when part of a texture looks wrong: Alt-click a good area, paint over the bad one, and it
 copies the look across, colours and all.
@@ -29,7 +31,7 @@ copies the look across, colours and all.
 ## Getting around
 
 - Left drag paints, right drag turns, the wheel zooms, middle drag slides. W A S D and the arrow keys move too, R
-  resets the view.
+  resets the view. Every key is listed in the corner of the screen (click its title to fold it away).
 - On a touch screen: one finger paints, two fingers slide, pinch and twist.
 - Brush, Fill, Lasso and Eraser are in the panel on the right. Wall draws a line that Fill won't cross.
 - Preview the cut shows only what you're keeping.
@@ -38,9 +40,10 @@ copies the look across, colours and all.
 
 ## A few things to know
 
-- The piece finder takes a while: 10 to 20 minutes on one core when you open the tool from disk, two to four times
-  faster on the website (or with `start_windows.bat` / `start.py` if you have Python), since then it can use every core
-  but one.
+- The piece finder takes a few minutes. It works on several cores side by side (up to four, fewer on a computer with
+  little memory), and on a graphics card that can run it, it uses that too. If the graphics card gives a wrong answer
+  at any point, it carries on without it. If a run goes wrong, File, then Copy piece finder report, gives you text to
+  send.
 - Models up to about 4 million triangles. Big ones want a computer with a decent graphics card.
 - `.stl` and `.ply` files have no texture, so they open grey.
 - From `.usdz` or `.blend`, export a `.glb` first (in Blender: File, Export, glTF 2.0).
