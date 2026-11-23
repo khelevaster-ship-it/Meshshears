@@ -1,0 +1,1 @@
+window.FinderModel = {"model": "SAM 2.1 small (Hiera-S), encoder 8-bit, decoder 32-bit", "runtime": "onnxruntime-web 1.20.1", "files": ["ort_js.js", "ort_glue.js", "ort_wasm.js", "sam_enc.js", "sam_dec.js"]};

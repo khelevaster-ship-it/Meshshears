@@ -1,0 +1,2790 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<script src="coi-serviceworker.js"></script>
+</head>
+<body>
+<title>MeshShears</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a top bar, the model filling the stage, a tool panel at the right; at phone width the panel sits under the model. */
+:root {
+  --bg: #eef0f3;
+  --panel: #f8f9fb;
+  --card: #ffffff;
+  --stage: #dfe3e8;
+  --fg: #1b2129;
+  --muted: #5d6773;
+  --line: #d9dee4;
+  --accent: #2f62b3;
+  --accent-fg: #ffffff;
+  --accent-soft: #e5edf9;
+  --chip: #eef1f5;
+  --warn: #9c4209;
+  --focus: #2f62b3;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
+  --radius: 10px;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161b; --panel: #161b21; --card: #1d232b; --stage: #222931; --fg: #e6e9ed; --muted: #9ba5b1;
+    --line: #2d353f; --accent: #82abe8; --accent-fg: #0c1420; --accent-soft: #23324a; --chip: #262d36; --warn: #f0a46b; --focus: #9cc0f2;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161b; --panel: #161b21; --card: #1d232b; --stage: #222931; --fg: #e6e9ed; --muted: #9ba5b1;
+  --line: #2d353f; --accent: #82abe8; --accent-fg: #0c1420; --accent-soft: #23324a; --chip: #262d36; --warn: #f0a46b; --focus: #9cc0f2;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+  color-scheme: dark;
+}
+html { height: 100%; box-sizing: border-box; }
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 14px; overflow: hidden; }
+#app { display: grid; grid-template-columns: minmax(0, 1fr) 316px; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* top bar */
+#bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 8px max(16px, env(safe-area-inset-right, 0px)) 8px max(16px, env(safe-area-inset-left, 0px));
+  background: var(--panel); border-bottom: 1px solid var(--line); min-width: 0; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; letter-spacing: -.01em; white-space: nowrap; }
+.brand svg { color: var(--accent); width: 20px; height: 20px; }
+.figpick { display: flex; gap: 8px; align-items: center; flex: 1 1 280px; min-width: 0; }
+.figpick select { flex: 1 1 auto; min-width: 0; max-width: 300px; }
+.barright { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.menuwrap { position: relative; }
+.menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 240px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(16,24,40,.18); padding: 6px; display: flex; flex-direction: column; }
+.menu button { background: transparent; border: 0; text-align: left; justify-content: flex-start; padding: 8px 10px; border-radius: 6px; min-height: 34px; }
+.menu button:hover:not(:disabled) { background: var(--chip); }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; width: auto; }
+
+#stage { position: relative; overflow: hidden; background: var(--stage); touch-action: none; min-width: 0; min-height: 0; }
+#view { display: block; width: 100%; height: 100%; outline: none; }
+#cloneMark { position: absolute; pointer-events: none; width: 18px; height: 18px; transform: translate(-50%, -50%); }
+#cloneMark::before, #cloneMark::after { content: ""; position: absolute; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
+#cloneMark::before { left: 8px; top: 0; width: 2px; height: 18px; }
+#cloneMark::after { top: 8px; left: 0; height: 2px; width: 18px; }
+#cursor { position: absolute; pointer-events: none; border: 1.5px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgba(0,0,0,.55); transform: translate(-50%, -50%); }
+#lasso { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#lasso polyline { fill: rgba(127,169,230,.18); stroke: #fff; stroke-width: 1.5; stroke-dasharray: 5 4; }
+#help { position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - 24px); font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--panel) 88%, transparent); padding: 6px 10px; border-radius: 8px; pointer-events: none; }
+#toast { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); max-width: calc(100% - 24px); background: var(--fg); color: var(--bg); padding: 9px 14px; border-radius: 8px; font-size: 13px; line-height: 1.35; box-shadow: var(--shadow); z-index: 5; }
+#loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 15px; text-align: center; padding: 24px; }
+#finding { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 5; width: min(420px, calc(100% - 32px)); }
+.findcard { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.18); display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; font-size: 13px; }
+.findtrack { grid-column: 1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+#findBar { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+#findCancel { grid-row: 1 / span 2; grid-column: 2; }
+#findBox { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+#empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; }
+.emptycard { max-width: 380px; text-align: center; background: var(--card); border: 2px dashed var(--line); border-radius: 16px; padding: 32px 24px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.emptycard svg { width: 40px; height: 40px; color: var(--accent); }
+.emptycard h1 { margin: 0; font-size: 20px; font-weight: 600; }
+.emptycard p { margin: 0; color: var(--muted); line-height: 1.45; }
+#dropzone { position: absolute; inset: 10px; border: 3px dashed var(--accent); border-radius: 16px; background: color-mix(in srgb, var(--accent) 12%, transparent); display: grid; place-items: center; z-index: 10; pointer-events: none; }
+#dropzone div { background: var(--accent); color: var(--accent-fg); padding: 10px 18px; border-radius: 999px; font-weight: 600; }
+#guide { position: absolute; right: 16px; top: 16px; width: min(360px, calc(100% - 32px)); background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 32px rgba(16,24,40,.22); padding: 16px 18px; z-index: 8; }
+#guide h2 { font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--fg); }
+#guide ol { margin: 10px 0 14px; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; line-height: 1.45; }
+
+/* panel */
+#panel { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; overflow-x: hidden; min-width: 0;
+  padding-block: 12px 24px; padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 10px; }
+@media (max-width: 760px) {
+  #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 52% minmax(0, 1fr); }
+  #panel { border-left: 0; border-top: 1px solid var(--line); }
+  .brand span { display: none; }
+  .figpick { flex-basis: 100%; order: 3; }
+  .figpick:has(select[hidden]) { flex-basis: auto; order: 0; flex-grow: 0; }
+  #openModel span { display: none; }
+  .barright { margin-left: auto; }
+}
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 9px; min-width: 0; box-shadow: var(--shadow); }
+details.card { gap: 0; }
+details.card[open] { gap: 9px; }
+details.card > summary { cursor: pointer; font-weight: 600; font-size: 13px; list-style: none; display: flex; align-items: center; justify-content: space-between; min-height: 22px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary::after { content: ""; width: 8px; height: 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); margin-right: 4px; transition: transform .15s; }
+details.card[open] > summary::after { transform: rotate(-135deg); }
+h2 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.row.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.row.three button { padding-inline: 4px; font-size: 12.5px; }
+.grow { flex: 1 1 auto; min-width: 0; }
+button, select, input, textarea { font: inherit; color: inherit; }
+button { background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; cursor: pointer; min-height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: background .12s, border-color .12s; }
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: .45; cursor: default; }
+button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; padding-inline: 18px; }
+button.ghost { background: transparent; }
+button.icon { width: 34px; padding: 0; }
+button.wide { width: 100%; }
+.caret { width: 14px; height: 14px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+select { background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; min-height: 34px; }
+textarea { width: 100%; min-height: 56px; resize: vertical; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+.seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; background: var(--chip); padding: 3px; border-radius: 9px; border: 1px solid var(--line); }
+.seg button { border: 0; background: transparent; padding: 6px 4px; border-radius: 7px; font-weight: 500; }
+.seg button[aria-pressed="true"] { background: var(--card); color: var(--fg); box-shadow: var(--shadow); }
+.tools { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+.tools button { flex-direction: column; gap: 3px; padding: 7px 2px 5px; font-size: 11.5px; min-height: 52px; line-height: 1.1; }
+.tools button span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.views { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+.views button { padding: 5px 2px; font-size: 12px; min-height: 30px; }
+.labels { display: flex; flex-direction: column; gap: 2px; }
+.lab { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto auto; gap: 6px; align-items: center; padding: 4px 5px; border-radius: 8px; border: 1px solid transparent; cursor: pointer; }
+.lab:hover { background: var(--chip); }
+.lab.current { border-color: var(--accent); background: var(--accent-soft); }
+.lab .dot { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line); padding: 0; overflow: hidden; position: relative; min-height: 0; }
+.lab .dot input { position: absolute; inset: -6px; width: 34px; height: 34px; border: 0; padding: 0; cursor: pointer; opacity: 0; }
+.lab .name { width: 100%; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 2px 4px; }
+.lab .name:hover:not([readonly]), .lab .name:focus { border-color: var(--line); background: var(--bg); }
+.lab .count { font-family: var(--font-num); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; min-width: 46px; }
+.lab button { min-height: 24px; padding: 1px 6px; font-size: 11px; }
+.lab .key { font-family: var(--font-num); font-size: 10px; color: var(--muted); }
+.sub { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.big { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.switch { display: flex; align-items: center; gap: 8px; cursor: pointer; min-height: 26px; }
+.switch.strong { font-weight: 600; }
+.switch input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; flex: none; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.val { font-family: var(--font-num); font-size: 12px; color: var(--muted); min-width: 52px; text-align: right; }
+#saveStatus.warn, .warn { color: var(--warn); }
+.preview-on #view { outline: 3px solid var(--accent); outline-offset: -3px; }
+.nomodel #panel > * { opacity: .5; pointer-events: none; }
+.nomodel #faceTotal, .nomodel #faceWord, .nomodel #help { visibility: hidden; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div id="app">
+  <header id="bar">
+    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l6 9-6 9M13 6h7M13 12h7M13 18h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>MeshShears</span></div>
+    <div class="figpick">
+      <select id="figure" aria-label="Model"></select>
+      <button id="openModel" class="ghost" title="Open a model from your computer (.glb, .gltf, .obj, .fbx, .stl, .ply). You can also drop it on the view."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg><span>Open model</span></button>
+    </div>
+    <div class="barright">
+      <button id="theme" class="icon" title="Light or dark look" aria-label="Look: follows your system"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="themeIcon" d="M12 3a9 9 0 1 0 0 18zM12 3a9 9 0 0 1 0 18"/></svg></button>
+      <button id="undo" class="icon" disabled title="Undo (Ctrl+Z)" aria-label="Undo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
+      <button id="redo" class="icon" disabled title="Redo (Ctrl+Y)" aria-label="Redo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14l5-5-5-5M20 9H9a5 5 0 0 0 0 10h3"/></svg></button>
+      <div class="menuwrap">
+        <button id="fileMenuBtn" class="ghost" aria-haspopup="true" aria-expanded="false">File<svg viewBox="0 0 24 24" aria-hidden="true" class="caret"><path d="M6 9l6 6 6-6"/></svg></button>
+        <div id="fileMenu" class="menu" role="menu" hidden>
+          <button id="savePaintFile" role="menuitem">Save paint to a file…</button>
+          <button id="openPaintFile" role="menuitem">Open a paint file…</button>
+          <button id="exportPieces" role="menuitem">Export kept pieces (.glb)…</button>
+          <button id="findPieces" role="menuitem" hidden>Find pieces automatically…</button>
+          <button id="openPiecesFile" role="menuitem">Open a found-pieces file…</button>
+          <button id="savePiecesFile" role="menuitem" hidden>Save found pieces to a file…</button>
+          <button id="forgetModel" role="menuitem">Remove this model from this browser</button>
+          <hr>
+          <button id="showGuide" role="menuitem">How it works</button>
+        </div>
+      </div>
+      <button id="save" class="primary" disabled>Save</button>
+    </div>
+    <input id="modelInput" type="file" multiple accept=".glb,.gltf,.obj,.fbx,.stl,.ply,.mtl,.bin,.png,.jpg,.jpeg,.webp,.tga" hidden>
+    <input id="paintInput" type="file" accept=".json,application/json" hidden>
+    <input id="piecesInput" type="file" accept=".json,application/json" hidden>
+  </header>
+  <div id="stage">
+    <canvas id="view" tabindex="0" aria-label="The model. Drag to paint, right drag to turn."></canvas>
+    <div id="cursor" hidden></div>
+    <div id="cloneMark" hidden></div>
+    <svg id="lasso" hidden><polyline points=""></polyline></svg>
+    <div id="help"></div>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+    <div id="loading">Loading…</div>
+    <div id="finding" hidden><div class="findcard"><div id="findText">Finding pieces…</div><div class="findtrack"><div id="findBar"></div></div><button id="findCancel" class="ghost">Stop</button></div></div>
+    <div id="empty" hidden>
+      <div class="emptycard">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+        <h1>Drop a model here</h1>
+        <p>A .glb, .gltf, .obj, .fbx, .stl or .ply file. If its textures are separate files, drop them in together.</p>
+        <button id="emptyOpen" class="primary">Choose a file</button>
+        <p class="sub">Your model stays on your computer. Nothing is uploaded.</p>
+      </div>
+    </div>
+    <div id="dropzone" hidden><div>Drop to open</div></div>
+    <div id="guide" role="dialog" aria-labelledby="guideTitle" hidden>
+      <h2 id="guideTitle">How it works</h2>
+      <ol>
+        <li><b>Pick a label</b> on the right, one for each piece you want to keep (shirt, belt, boots…). <b>Remove</b> marks what goes.</li>
+        <li><b>Paint</b> with the Brush, or click once with <b>Fill</b> to take a whole area up to its edges.</li>
+        <li><b>Turn</b> with a right drag, <b>zoom</b> with the wheel, <b>slide</b> with a middle drag.</li>
+        <li>Switch on <b>Preview the cut</b> to see only what is kept, then <b>Save</b>. <b>File</b> exports the pieces as models.</li>
+      </ol>
+      <button id="guideOk" class="primary">Got it</button>
+    </div>
+  </div>
+  <aside id="panel" aria-label="Cut tools">
+    <section class="card">
+      <div class="modes seg" role="group" aria-label="What you are painting">
+        <button id="mode-cut" data-mode="cut" title="Mark which pieces to keep and what to remove">Pieces to keep</button>
+        <button id="mode-colour" data-mode="colour" title="Mark places whose colour should change">Colours to fix</button>
+      </div>
+      <div class="sub"><span id="faceTotal" class="big">0</span> <span id="faceWord">cloth faces</span></div>
+    </section>
+
+    <section class="card">
+      <h2>Tools</h2>
+      <div class="tools" role="group" aria-label="Tools">
+        <button id="tool-brush" data-tool="brush" title="Brush (B)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 3l3 3-9 9-3-3zM9 12c-3 0-4 2-4 4s-1 3-2 3c2 2 8 2 9-3"/></svg><span>Brush</span></button>
+        <button id="tool-fill" data-tool="fill" title="Fill (F)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11l7-7 7 7-7 7zM19 15s2 2.5 2 4a2 2 0 0 1-4 0c0-1.5 2-4 2-4z"/></svg><span>Fill</span></button>
+        <button id="tool-lasso" data-tool="lasso" title="Lasso (L)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4c5 0 9 2.5 9 6s-4 6-9 6-9-2.5-9-6 4-6 9-6zM7 15c-1 2 0 4 2 5"/></svg><span>Lasso</span></button>
+        <button id="tool-eraser" data-tool="eraser" title="Eraser (E)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 20h12M4 15l9-9 6 6-7 7H8z"/></svg><span>Eraser</span></button>
+        <button id="tool-turn" data-tool="turn" title="Turn the model with one finger or the left button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/></svg><span>Turn</span></button>
+        <button id="tool-dropper" data-tool="dropper" hidden title="Click the model to take its colour for the current swatch (I)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4l6 6M17 7l-10 10-3 1 1-3 10-10"/></svg><span>Colour</span></button>
+        <button id="tool-clone" data-tool="clone" hidden title="Clone (K): Alt-click (or tap, the first time) where to copy from, then paint where that look should go. Copies the texture, every colour in it."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6v5H9zM12 8v4M5 12h14l-2 9H7z"/></svg><span>Clone</span></button>
+        <button id="tool-wall" data-tool="wall" title="Drag a straight line across the model where a piece ends. Fill will not cross it."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20L20 4"/></svg><span>Wall</span></button>
+      </div>
+      <div class="row"><label for="size" class="grow">Brush size</label><span id="sizeVal" class="val">1.0 cm</span></div>
+      <input id="size" type="range" min="0.2" max="8" step="0.1" value="1" aria-label="Brush size in centimetres">
+    </section>
+
+    <section class="card">
+      <h2 id="labelsTitle">Labels</h2>
+      <div id="labels" class="labels"></div>
+      <div id="unpaintedNote" class="sub"></div>
+      <div class="row"><button id="addLabel" class="ghost wide">+ Add a label</button></div>
+      <div class="row three"><button id="fillHoles" title="Small unpainted spots surrounded by one label take that label">Fill holes</button><button id="smoothEdges" title="Evens out jagged outlines by one face">Smooth edges</button><button id="clearAll" title="Wipes all paint in this mode (locked labels stay). Undo brings it back.">Clear all</button></div>
+    </section>
+
+    <section class="card">
+      <label class="switch strong"><input id="preview" type="checkbox"> Preview the cut</label>
+      <div id="previewNote" class="sub">Shows only what will be kept.</div>
+      <div class="views">
+        <button id="view-front" data-view="front">Front</button>
+        <button id="view-back" data-view="back">Back</button>
+        <button id="view-left" data-view="left">Left</button>
+        <button id="view-right" data-view="right">Right</button>
+        <button id="view-reset" data-view="reset">Reset</button>
+      </div>
+    </section>
+
+    <details class="card" id="fillOpts">
+      <summary>Fill options</summary>
+      <div id="findBox" hidden><button id="findPiecesBtn" title="Photographs the model from 40 sides and outlines what it sees; afterwards one Fill click takes a whole piece">Find pieces automatically</button><span class="sub">Takes a few minutes; you can keep working.</span></div>
+      <div id="piecesBox" hidden>
+        <label class="switch"><input id="pieceFill" type="checkbox" checked> Fill takes a whole found piece</label>
+        <label class="switch"><input id="showPieces" type="checkbox"> Show found pieces</label>
+      </div>
+      <label class="switch"><input id="edgeFill" type="checkbox" checked> Fill stops at colour changes and sharp folds</label>
+      <div class="row"><label for="edgeSens" class="grow">Edge sensitivity</label><span id="edgeSensVal" class="val">50</span></div>
+      <input id="edgeSens" type="range" min="1" max="100" step="1" value="50" aria-label="Fill edge sensitivity: higher stops at smaller colour changes">
+      <label class="switch"><input id="through" type="checkbox"> Paint through (also paints the layers behind)</label>
+      <div class="row"><button id="undoWall" title="Takes away the last wall you drew">Undo wall</button><button id="clearWalls" title="Takes away every wall (your paint stays)">Clear walls</button><span id="wallInfo" class="sub"></span></div>
+    </details>
+
+    <details class="card" id="displayOpts">
+      <summary>Display</summary>
+      <div class="row"><label for="strength" class="grow">Paint strength</label><span id="strengthVal" class="val">70%</span></div>
+      <input id="strength" type="range" min="0" max="100" step="5" value="70" aria-label="Paint strength">
+      <label class="switch"><input id="sharp" type="checkbox"> Sharp view (finer, slower on big screens)</label>
+      <div id="speedNote" class="sub"></div>
+      <div id="extrasBox"><div class="sub">Extra pieces</div><div id="extras"></div></div>
+    </details>
+
+    <section class="card">
+      <h2>Notes and saving</h2>
+      <textarea id="note" aria-label="Notes about this cut" placeholder="Notes about this cut (optional)"></textarea>
+      <div class="row"><span id="saveStatus" class="sub grow">Not saved yet</span><span id="stepInfo" class="sub"></span></div>
+      <div id="dbNote" class="sub"></div>
+      <button id="restore" hidden>Bring back unsaved work</button>
+    </section>
+  </aside>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script src="vendor/GLTFLoader.js"></script>
+<script src="vendor/OBJLoader.js"></script>
+<script src="vendor/MTLLoader.js"></script>
+<script src="vendor/GLTFExporter.js"></script>
+<script src="vendor/fflate.min.js"></script>
+<script src="vendor/NURBSUtils.js"></script>
+<script src="vendor/NURBSCurve.js"></script>
+<script src="vendor/FBXLoader.js"></script>
+<script src="vendor/STLLoader.js"></script>
+<script src="vendor/PLYLoader.js"></script>
+<script src="vendor/DRACOLoader.js"></script>
+<script src="finder/finder_core.js"></script>
+<script src="finder/model/model_info.js"></script>
+
+<script>
+"use strict";
+/* ------------------------------------------------------------------ */
+/* Pure helpers: no page state. Also used by the automated checks.     */
+/* ------------------------------------------------------------------ */
+const CutCore = (() => {
+  const PART_CHARS = 150000;               // a part's base64 text never passes this
+  const PART_BYTES = PART_CHARS / 4 * 3;   // 112,500 bytes -> exactly 150,000 characters
+
+  function bytesToB64(u8) {
+    let s = "";
+    const CH = 0x8000;
+    for (let i = 0; i < u8.length; i += CH) s += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+    return btoa(s);
+  }
+  function b64ToBytes(b64) {
+    const s = atob(b64), out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  }
+  function splitParts(u8) {
+    const parts = [];
+    for (let i = 0; i < u8.length; i += PART_BYTES) parts.push(bytesToB64(u8.subarray(i, i + PART_BYTES)));
+    if (!parts.length) parts.push("");
+    return parts;
+  }
+  function joinParts(parts) {
+    const chunks = parts.map(b64ToBytes);
+    const n = chunks.reduce((a, c) => a + c.length, 0), out = new Uint8Array(n);
+    let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+    return out;
+  }
+  // Faces sharing an edge. Returns {start, list} (compressed rows).
+  // Faces that share an edge. Edges are grouped by their lower vertex (a counting sort), then matched inside each
+  // small group, so it stays exact for any model size (one combined number per edge loses precision past ~1M faces).
+  function buildAdjacency(idx, nFaces, nVerts) {
+    const n = nFaces * 3, cnt = new Uint32Array(nVerts + 1);
+    for (let k = 0; k < n; k++) { const f = (k / 3) | 0, e = k - f * 3, a = idx[k], b = idx[f * 3 + (e + 1) % 3]; cnt[(a < b ? a : b) + 1]++; }
+    for (let v = 0; v < nVerts; v++) cnt[v + 1] += cnt[v];
+    const pos = cnt.slice(0, nVerts), B = new Uint32Array(n), F = new Uint32Array(n);
+    for (let k = 0; k < n; k++) { const f = (k / 3) | 0, e = k - f * 3, a = idx[k], b = idx[f * 3 + (e + 1) % 3]; const lo = a < b ? a : b, hi = a < b ? b : a; const q = pos[lo]++; B[q] = hi; F[q] = f; }
+    const deg = new Uint32Array(nFaces);
+    const pairsA = [], pairsB = [];
+    for (let v = 0; v < nVerts; v++) {
+      const s0 = cnt[v], s1 = cnt[v + 1];
+      for (let p = s0; p < s1; p++) for (let q = p + 1; q < s1; q++) {
+        if (B[p] !== B[q]) continue;
+        const fa = F[p], fb = F[q];
+        if (fa === fb) continue;
+        pairsA.push(fa); pairsB.push(fb); deg[fa]++; deg[fb]++;
+      }
+    }
+    const start = new Uint32Array(nFaces + 1);
+    for (let f = 0; f < nFaces; f++) start[f + 1] = start[f] + deg[f];
+    const list = new Uint32Array(start[nFaces]), fillAt = start.slice(0, nFaces);
+    for (let p = 0; p < pairsA.length; p++) { list[fillAt[pairsA[p]]++] = pairsB[p]; list[fillAt[pairsB[p]]++] = pairsA[p]; }
+    return { start, list };
+  }
+  // Spread from one face over neighbours that share an edge and carry the same label.
+  // Returns the faces that would change (all of the same old label).
+  // walls (optional, one byte per face): a wall face is filled but the fill does not spread on from it
+  function floodFill(labels, adj, startFace, newLabel, locked, walls) {
+    const old = labels[startFace];
+    if (old === newLabel || (locked && locked[old])) return new Uint32Array(0);
+    const seen = new Uint8Array(labels.length), stack = [startFace], out = [];
+    seen[startFace] = 1;
+    while (stack.length) {
+      const f = stack.pop(); out.push(f);
+      if (walls && walls[f] && f !== startFace) continue;
+      for (let k = adj.start[f]; k < adj.start[f + 1]; k++) {
+        const g = adj.list[k];
+        if (!seen[g] && labels[g] === old) { seen[g] = 1; stack.push(g); }
+      }
+    }
+    return Uint32Array.from(out);
+  }
+  // Unpainted (0) islands of fewer than maxSize faces whose every painted neighbour carries one same label take that label.
+  function fillHoles(labels, adj, maxSize, locked) {
+    const n = labels.length, seen = new Uint8Array(n), faces = [], out = [];
+    let islands = 0;
+    for (let s = 0; s < n; s++) {
+      if (labels[s] !== 0 || seen[s]) continue;
+      const comp = [s], stack = [s]; seen[s] = 1;
+      let border = -1, mixed = false;
+      while (stack.length) {
+        const f = stack.pop();
+        for (let k = adj.start[f]; k < adj.start[f + 1]; k++) {
+          const g = adj.list[k], L = labels[g];
+          if (L === 0) { if (!seen[g]) { seen[g] = 1; stack.push(g); comp.push(g); } }
+          else if (border === -1) border = L;
+          else if (border !== L) mixed = true;
+        }
+      }
+      if (comp.length >= maxSize || border <= 0 || mixed || (locked && locked[0])) continue;
+      islands++;
+      for (const f of comp) { faces.push(f); out.push(border); }
+    }
+    return { faces: Uint32Array.from(faces), labels: Uint8Array.from(out), islands };
+  }
+  // Faces where at least two of their three edge neighbours share another label take that label (a few passes).
+  function smoothEdges(labels, adj, locked, passes) {
+    const cur = labels.slice(), changed = new Map();
+    for (let p = 0; p < (passes || 1); p++) {
+      const snap = cur.slice(); let any = false;
+      for (let f = 0; f < cur.length; f++) {
+        const own = snap[f]; if (locked && locked[own]) continue;
+        let a = -1, ca = 0, b = -1, cb = 0;
+        for (let k = adj.start[f]; k < adj.start[f + 1]; k++) {
+          const L = snap[adj.list[k]]; if (L === own) continue;
+          if (a === -1 || a === L) { a = L; ca++; } else if (b === -1 || b === L) { b = L; cb++; }
+        }
+        const best = ca >= cb ? a : b, cnt = Math.max(ca, cb);
+        if (best >= 0 && cnt >= 2 && !(locked && locked[best])) { cur[f] = best; any = true; if (!changed.has(f)) changed.set(f, true); }
+      }
+      if (!any) break;
+    }
+    const faces = [], out = [];
+    for (const f of changed.keys()) if (cur[f] !== labels[f]) { faces.push(f); out.push(cur[f]); }
+    return { faces: Uint32Array.from(faces), labels: Uint8Array.from(out) };
+  }
+  function isKept(label, unpainted) {
+    if (label === 15) return false;
+    if (label === 0) return unpainted !== "remove";
+    return true;
+  }
+  function keptCount(labels, unpainted) {
+    let n = 0; for (let i = 0; i < labels.length; i++) if (isKept(labels[i], unpainted)) n++;
+    return n;
+  }
+  // a zip file with the files stored as they are (no packing): enough to hand over several files as one
+  const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(u8) { let c = 0xffffffff; for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+  function zipStore(files) {
+    const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+    for (const f of files) {
+      const name = enc.encode(f.name), crc = crc32(f.data), n = f.data.length;
+      const h = new DataView(new ArrayBuffer(30));
+      h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
+      h.setUint32(14, crc, true); h.setUint32(18, n, true); h.setUint32(22, n, true); h.setUint16(26, name.length, true);
+      parts.push(new Uint8Array(h.buffer), name, f.data);
+      const c = new DataView(new ArrayBuffer(46));
+      c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true);
+      c.setUint32(16, crc, true); c.setUint32(20, n, true); c.setUint32(24, n, true); c.setUint16(28, name.length, true); c.setUint32(42, off, true);
+      central.push(new Uint8Array(c.buffer), name);
+      off += 30 + name.length + n;
+    }
+    const csize = central.reduce((a, b) => a + b.length, 0), e = new DataView(new ArrayBuffer(22));
+    e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csize, true); e.setUint32(16, off, true);
+    return new Blob([...parts, ...central, new Uint8Array(e.buffer)], { type: "application/zip" });
+  }
+  function randomStamp() {
+    const a = new Uint8Array(9);
+    (self.crypto || window.crypto).getRandomValues(a);
+    return Array.from(a, b => b.toString(16).padStart(2, "0")).join("");
+  }
+  // Edge-aware fill: like floodFill, but a neighbour joins only if its colour is close to the face it is reached from
+  // (tLocal) and to the running average of everything filled so far (tGlobal), and the surface does not bend more
+  // than the fold limit between them. col = 3 colour values per face (perceptual, CIE Lab); nrm = unit normal per face.
+  function edgeFill(labels, adj, startFace, newLabel, locked, col, nrm, tLocal, tGlobal, cosFold, walls) {
+    const old = labels[startFace];
+    if (old === newLabel || (locked && locked[old])) return new Uint32Array(0);
+    const seen = new Uint8Array(labels.length), queue = [startFace], out = [];
+    seen[startFace] = 1;
+    let mL = col[startFace * 3], mA = col[startFace * 3 + 1], mB = col[startFace * 3 + 2], n = 1;
+    const tl2 = tLocal * tLocal, tg2 = tGlobal * tGlobal;
+    for (let qi = 0; qi < queue.length; qi++) {
+      const f = queue[qi]; out.push(f);
+      if (walls && walls[f] && f !== startFace) continue;
+      const fL = col[f * 3], fA = col[f * 3 + 1], fB = col[f * 3 + 2];
+      for (let k = adj.start[f]; k < adj.start[f + 1]; k++) {
+        const g = adj.list[k];
+        if (seen[g] || labels[g] !== old) continue;
+        const gL = col[g * 3], gA = col[g * 3 + 1], gB = col[g * 3 + 2];
+        const dl = (gL - fL) ** 2 + (gA - fA) ** 2 + (gB - fB) ** 2;
+        const dg = (gL - mL) ** 2 + (gA - mA) ** 2 + (gB - mB) ** 2;
+        const bend = nrm[f * 3] * nrm[g * 3] + nrm[f * 3 + 1] * nrm[g * 3 + 1] + nrm[f * 3 + 2] * nrm[g * 3 + 2];
+        if (dl > tl2 || dg > tg2 || bend < cosFold) continue;
+        seen[g] = 1; queue.push(g);
+        n++; mL += (gL - mL) / n; mA += (gA - mA) / n; mB += (gB - mB) / n;
+      }
+    }
+    return Uint32Array.from(out);
+  }
+  // sRGB bytes to CIE Lab (D65)
+  function rgbToLab(r, g, b, out, o) {
+    const lin = c => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    const R = lin(r), G = lin(g), B = lin(b);
+    const x = (0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047, y = 0.2126 * R + 0.7152 * G + 0.0722 * B, z = (0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883;
+    const f = t => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+    const fx = f(x), fy = f(y), fz = f(z);
+    out[o] = 116 * fy - 16; out[o + 1] = 500 * (fx - fy); out[o + 2] = 200 * (fy - fz);
+  }
+  // slider 1..100 (higher stops more easily) to the three limits
+  function edgeLimits(sens) {
+    const tGlobal = 30 - 0.25 * sens;
+    return { tLocal: tGlobal * 0.6, tGlobal, cosFold: Math.cos((100 - 0.6 * sens) * Math.PI / 180) };
+  }
+  return { PART_CHARS, bytesToB64, b64ToBytes, splitParts, joinParts, buildAdjacency, floodFill, edgeFill, rgbToLab, edgeLimits, fillHoles, smoothEdges, isKept, keptCount, randomStamp, crc32, zipStore };
+})();
+window.CutCore = CutCore;
+
+/* ------------------------------------------------------------------ */
+/* Opening a person's own model (.glb .gltf .obj .fbx .stl .ply) and   */
+/* exporting cut pieces.                                              */
+/* Uses the three.js example loaders loaded beside the page.           */
+/* ------------------------------------------------------------------ */
+const ModelIO = (() => {
+  const MODEL_EXT = /\.(glb|gltf|obj|fbx|stl|ply)$/i;
+  const baseName = n => n.split(/[\\/]/).pop();
+  // A model's own up is Y (glTF and nearly every OBJ); the page's is Z with the front toward +X.
+  // page (x, y, z) = model (z, x, y): a turn, so nothing is mirrored.
+  const toPage = (x, y, z, out, o) => { out[o] = z; out[o + 1] = x; out[o + 2] = y; };
+  function hashArrays(pos, nFaces) {
+    let h = 2166136261 >>> 0; const f32 = new Uint32Array(pos.buffer, pos.byteOffset, pos.length);
+    const step = Math.max(1, Math.floor(f32.length / 20000));
+    for (let i = 0; i < f32.length; i += step) { h ^= f32[i]; h = Math.imul(h, 16777619) >>> 0; }
+    h ^= nFaces; h = Math.imul(h, 16777619) >>> 0;
+    return ("00000000" + h.toString(16)).slice(-8) + nFaces.toString(16);
+  }
+  // Files dropped together: the model plus the textures, .bin and .mtl it names.
+  function urlMap(files) {
+    const map = {}, urls = [];
+    for (const f of files) { const u = URL.createObjectURL(f); urls.push(u); map[baseName(f.name).toLowerCase()] = u; }
+    const mgr = new THREE.LoadingManager();
+    mgr.setURLModifier(url => {
+      if (/^(blob:|data:)/.test(url)) return url;
+      const k = baseName(decodeURIComponent(url)).toLowerCase();
+      return map[k] || url;
+    });
+    return { map, mgr, release: () => urls.forEach(u => URL.revokeObjectURL(u)) };
+  }
+  async function parseFile(main, files) {
+    const name = main.name, ext = name.split(".").pop().toLowerCase();
+    const um = urlMap(files);
+    try {
+      if (ext === "glb" || ext === "gltf") {
+        if (!THREE.GLTFLoader) throw new Error("The glTF reader did not load.");
+        const loader = new THREE.GLTFLoader(um.mgr);
+        const data = ext === "glb" ? await main.arrayBuffer() : await main.text();
+        // compressed meshes (Draco): the decoder ships as a script beside the page and is loaded only when needed
+        if (usesDraco(data)) loader.setDRACOLoader(await dracoLoader());
+        const gltf = await new Promise((res, rej) => loader.parse(data, "", res, e => rej(new Error((e && e.message) || "That file could not be read as glTF."))));
+        return { root: gltf.scene, vFlip: false };
+      }
+      if (ext === "obj") {
+        if (!THREE.OBJLoader) throw new Error("The OBJ reader did not load.");
+        const text = await main.text();
+        const loader = new THREE.OBJLoader(um.mgr);
+        const mtlName = (text.match(/^mtllib\s+(.+)$/m) || [])[1];
+        if (mtlName && THREE.MTLLoader && um.map[baseName(mtlName.trim()).toLowerCase()]) {
+          const mtl = await new Promise((res, rej) => new THREE.MTLLoader(um.mgr).load(baseName(mtlName.trim()), res, undefined, rej)).catch(() => null);
+          if (mtl) { mtl.preload(); loader.setMaterials(mtl); await waitTextures(mtl); }
+        }
+        return { root: loader.parse(text), vFlip: true };
+      }
+      if (ext === "fbx") {
+        if (!THREE.FBXLoader) throw new Error("The FBX reader did not load.");
+        const root = new THREE.FBXLoader(um.mgr).parse(await main.arrayBuffer(), "");
+        await waitMapImages(root);
+        return { root, vFlip: true };
+      }
+      if (ext === "stl" || ext === "ply") {
+        const L = ext === "stl" ? THREE.STLLoader : THREE.PLYLoader;
+        if (!L) throw new Error("The " + ext.toUpperCase() + " reader did not load.");
+        const g = new L().parse(await main.arrayBuffer());
+        // STL files come from 3D printing tools, which put Z up; turn them to Y up like every other format here
+        if (ext === "stl") g.rotateX(-Math.PI / 2);
+        const col = g.attributes.color ? null : 0xb0b0b0;
+        return { root: new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: col === null ? 0xffffff : col })), vFlip: true };
+      }
+      throw new Error("Only .glb, .gltf, .obj, .fbx, .stl and .ply models can be opened.");
+    } finally { setTimeout(um.release, 60000); }
+  }
+  function usesDraco(data) {
+    if (typeof data === "string") return data.indexOf("KHR_draco_mesh_compression") >= 0;
+    const u8 = new Uint8Array(data, 0, Math.min(data.byteLength, 20 + new DataView(data).getUint32(12, true)));
+    return new TextDecoder().decode(u8).indexOf("KHR_draco_mesh_compression") >= 0;
+  }
+  let draco = null;
+  async function dracoLoader() {
+    if (draco) return draco;
+    if (!window.DracoAssets) await new Promise((res, rej) => { const s = document.createElement("script"); s.src = "vendor/draco_assets.js"; s.onload = res; s.onerror = () => rej(new Error("The Draco decoder did not load.")); document.head.appendChild(s); });
+    if (!THREE.DRACOLoader) throw new Error("The Draco reader did not load.");
+    const A = window.DracoAssets, bin = atob(A.wasm), wasm = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) wasm[i] = bin.charCodeAt(i);
+    draco = new THREE.DRACOLoader();
+    draco.setDecoderConfig({ type: "wasm" });
+    draco._loadLibrary = (url, type) => Promise.resolve(type === "arraybuffer" ? wasm.buffer.slice(0) : A.wrapper);
+    return draco;
+  }
+  // textures named in an FBX load after the parse; wait for them (up to 8 s) so the texture picture has them
+  function waitMapImages(root) {
+    const ps = [];
+    root.traverse(o => { if (!o.isMesh) return; (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => {
+      if (m && m.map && !(m.map.image && m.map.image.width)) ps.push(new Promise(r => { const t0 = Date.now(); (function w() { if ((m.map.image && m.map.image.width) || Date.now() - t0 > 8000) r(); else setTimeout(w, 50); })(); }));
+    }); });
+    return Promise.all(ps);
+  }
+  function waitTextures(mtl) {
+    const ps = [];
+    for (const k in mtl.materials) { const m = mtl.materials[k]; if (m.map && m.map.image === undefined) ps.push(new Promise(r => { const t0 = Date.now(); (function w() { if (m.map.image || Date.now() - t0 > 8000) r(); else setTimeout(w, 50); })(); })); }
+    return Promise.all(ps);
+  }
+  // Every mesh of the model joined into one: positions shared where they meet (so Fill can walk across), one texture
+  // picture holding every material's picture side by side, uv per corner.
+  async function build(root, vFlip, name) {
+    root.updateMatrixWorld(true);
+    const meshes = [];
+    root.traverse(o => { if (o.isMesh && o.geometry && o.geometry.attributes.position) meshes.push(o); });
+    if (!meshes.length) throw new Error("No surfaces were found in that file.");
+    // materials, in first-use order, one picture cell each
+    const mats = [], matIndex = new Map();
+    const groupsOf = m => {
+      const g = m.geometry, n = g.index ? g.index.count : g.attributes.position.count;
+      const list = Array.isArray(m.material) && g.groups.length ? g.groups.map(gr => ({ start: gr.start, count: gr.count, mat: m.material[gr.materialIndex] })) : [{ start: 0, count: n, mat: Array.isArray(m.material) ? m.material[0] : m.material }];
+      for (const it of list) { if (!matIndex.has(it.mat)) { matIndex.set(it.mat, mats.length); mats.push(it.mat); } it.cell = matIndex.get(it.mat); }
+      return list;
+    };
+    let nFaces = 0; const plan = meshes.map(m => { const gl = groupsOf(m); gl.forEach(it => { nFaces += Math.floor(it.count / 3); }); return gl; });
+    if (nFaces > 4000000) throw new Error("That model has " + nFaces.toLocaleString("en-US") + " triangles; the most this page can open is 4,000,000.");
+    // texture picture
+    const atlas = await makeAtlas(mats);
+    // corners
+    const pos = new Float32Array(nFaces * 9), uv = new Float32Array(nFaces * 6);
+    const v = new THREE.Vector3(); let f = 0;
+    meshes.forEach((m, mi) => {
+      const g = m.geometry, P = g.attributes.position, U = g.attributes.uv, I = g.index;
+      for (const it of plan[mi]) {
+        const cell = atlas.cells[it.cell];
+        for (let t = it.start; t + 2 < it.start + it.count; t += 3) {
+          let fu = 0, fv = 0;
+          if (U) { for (let k = 0; k < 3; k++) { const vi = I ? I.getX(t + k) : t + k; fu += U.getX(vi); fv += vFlip ? 1 - U.getY(vi) : U.getY(vi); } fu = Math.floor(fu / 3); fv = Math.floor(fv / 3); }
+          for (let k = 0; k < 3; k++) {
+            const vi = I ? I.getX(t + k) : t + k;
+            v.fromBufferAttribute(P, vi).applyMatrix4(m.matrixWorld);
+            toPage(v.x, v.y, v.z, pos, f * 9 + k * 3);
+            let u = 0.5, w = 0.5;
+            if (U) { u = Math.min(1, Math.max(0, U.getX(vi) - fu)); w = Math.min(1, Math.max(0, (vFlip ? 1 - U.getY(vi) : U.getY(vi)) - fv)); }
+            uv[f * 6 + k * 2] = cell.u0 + u * cell.du; uv[f * 6 + k * 2 + 1] = cell.v0 + w * cell.dv;
+          }
+          f++;
+        }
+      }
+    });
+    // size: a model far from person size (centimetres, or a tiny export) is scaled to 1.75 m tall; the export undoes it
+    let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < pos.length; i += 3) for (let k = 0; k < 3; k++) { const x = pos[i + k]; if (x < lo[k]) lo[k] = x; if (x > hi[k]) hi[k] = x; }
+    const height = hi[2] - lo[2], span = Math.max(height, hi[0] - lo[0], hi[1] - lo[1]) || 1;
+    const scale = (span < 0.3 || span > 4) ? 1.75 / span : 1;
+    // stand it on the ground at the middle
+    const cx = (lo[0] + hi[0]) / 2, cy = (lo[1] + hi[1]) / 2, cz = lo[2];
+    for (let i = 0; i < pos.length; i += 3) { pos[i] = (pos[i] - cx) * scale; pos[i + 1] = (pos[i + 1] - cy) * scale; pos[i + 2] = (pos[i + 2] - cz) * scale; }
+    // join corners that sit at the same point
+    const { verts, idx } = weld(pos, nFaces);
+    const meshId = hashArrays(verts, nFaces);
+    const fig = {
+      id: "own-" + meshId, name, local: true, unpainted: "keep",
+      cloth: { nFaces, nVerts: verts.length / 3, meshId },
+      labels: [{ id: 1, name: "Piece 1", color: "#1971c2" }],
+      body: null, context: [],
+      source: { scale, offset: [cx, cy, cz], file: name },
+    };
+    return { fig, pos: verts, idx, uv, tex: atlas.texture };
+  }
+  function weld(pos, nFaces) {
+    const n = nFaces * 3, idx = new Uint32Array(n), map = new Map(), out = [];
+    let lo = Infinity, hi = -Infinity; for (let i = 0; i < pos.length; i++) { if (pos[i] < lo) lo = pos[i]; if (pos[i] > hi) hi = pos[i]; }
+    const q = 1e6 / Math.max(1e-6, hi - lo);   // a millionth of the model's size
+    for (let c = 0; c < n; c++) {
+      const x = pos[c * 3], y = pos[c * 3 + 1], z = pos[c * 3 + 2];
+      const key = Math.round(x * q) + "," + Math.round(y * q) + "," + Math.round(z * q);
+      let id = map.get(key);
+      if (id === undefined) { id = out.length / 3; map.set(key, id); out.push(x, y, z); }
+      idx[c] = id;
+    }
+    return { verts: new Float32Array(out), idx };
+  }
+  // one picture with a cell for each material; a lone textured material keeps its own picture as is
+  async function makeAtlas(mats) {
+    const imgOf = m => m && m.map && m.map.image && (m.map.image.width || m.map.image.videoWidth) ? m.map.image : null;
+    const colOf = m => m && m.color ? "#" + m.color.clone().convertLinearToSRGB().getHexString() : "#b0b0b0";
+    if (mats.length === 1 && imgOf(mats[0])) {
+      const img = imgOf(mats[0]);
+      const cv = document.createElement("canvas"); cv.width = Math.min(4096, img.width); cv.height = Math.min(4096, img.height);
+      const g = cv.getContext("2d"); g.drawImage(img, 0, 0, cv.width, cv.height); tint(g, mats[0], cv.width, cv.height, 0, 0);
+      return { texture: canvasTexture(cv), cells: [{ u0: 0, v0: 0, du: 1, dv: 1 }] };
+    }
+    const n = mats.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
+    const biggest = Math.max(64, ...mats.map(m => { const i = imgOf(m); return i ? Math.max(i.width, i.height) : 64; }));
+    const cell = Math.max(64, Math.min(biggest, Math.floor(4096 / Math.max(cols, rows))));
+    const cv = document.createElement("canvas"); cv.width = cols * cell; cv.height = rows * cell;
+    const g = cv.getContext("2d"); const cells = [];
+    mats.forEach((m, i) => {
+      const x = (i % cols) * cell, y = Math.floor(i / cols) * cell, img = imgOf(m);
+      if (img) { g.drawImage(img, x, y, cell, cell); tint(g, m, cell, cell, x, y); }
+      else { g.fillStyle = colOf(m); g.fillRect(x, y, cell, cell); }
+      // a pixel's margin inside each cell keeps neighbouring pictures from bleeding in
+      const pad = 1 / cell;
+      cells.push({ u0: (x + 1) / cv.width, v0: (y + 1) / cv.height, du: (cell - 2) / cv.width, dv: (cell - 2) / cv.height, pad });
+    });
+    return { texture: canvasTexture(cv), cells };
+  }
+  function tint(g, m, w, h, x, y) {
+    if (!m || !m.color) return;
+    const c = m.color.clone().convertLinearToSRGB();
+    if (c.r > 0.98 && c.g > 0.98 && c.b > 0.98) return;
+    g.save(); g.globalCompositeOperation = "multiply"; g.fillStyle = "#" + c.getHexString(); g.fillRect(x, y, w, h); g.restore();
+  }
+  function canvasTexture(cv) {
+    const t = new THREE.CanvasTexture(cv); t.flipY = false; t.encoding = THREE.sRGBEncoding; t.needsUpdate = true;
+    return t;
+  }
+  async function open(files) {
+    files = [...files];
+    const main = files.find(f => MODEL_EXT.test(f.name));
+    if (!main) throw new Error("Drop a .glb, .gltf, .obj, .fbx, .stl or .ply file (with its textures, if they are separate files). From .usdz or .blend, export a .glb first.");
+    const { root, vFlip } = await parseFile(main, files);
+    return build(root, vFlip, main.name.replace(/\.[^.]+$/, ""));
+  }
+
+  // Export: one mesh per kept label, named after it, in the model's own size and up direction, with the texture.
+  function exportPieces(opts) {
+    const { pos, uv, labels, list, unpainted, isKept, texture, source, name } = opts;
+    const scale = source ? source.scale : 1, off = source ? source.offset : [0, 0, 0];
+    const groups = new Map();
+    for (let f = 0; f < labels.length; f++) { const l = labels[f]; if (!isKept(l, unpainted)) continue; if (!groups.has(l)) groups.set(l, []); groups.get(l).push(f); }
+    const scene = new THREE.Scene(); scene.name = name;
+    const mat = new THREE.MeshStandardMaterial({ map: texture || null, side: THREE.DoubleSide, roughness: 0.9, metalness: 0 });
+    const names = [];
+    for (const [l, faces] of groups) {
+      const p = new Float32Array(faces.length * 9), t = new Float32Array(faces.length * 6);
+      faces.forEach((f, i) => {
+        for (let k = 0; k < 3; k++) {
+          const o = f * 9 + k * 3, x = pos[o] / scale + off[0], y = pos[o + 1] / scale + off[1], z = pos[o + 2] / scale + off[2];
+          // back from the page's Z-up to the model's Y-up: model (x, y, z) = page (y, z, x)
+          p[i * 9 + k * 3] = y; p[i * 9 + k * 3 + 1] = z; p[i * 9 + k * 3 + 2] = x;
+        }
+        t.set(uv.subarray(f * 6, f * 6 + 6), i * 6);
+      });
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(p, 3)); g.setAttribute("uv", new THREE.BufferAttribute(t, 2)); g.computeVertexNormals();
+      const ent = list.find(e => e.id === l); const nm = ent ? ent.name : "Unlabelled";
+      const mesh = new THREE.Mesh(g, mat); mesh.name = nm; scene.add(mesh); names.push(nm + " (" + faces.length.toLocaleString("en-US") + ")");
+    }
+    if (!groups.size) return Promise.reject(new Error("Nothing is kept, so there is nothing to export."));
+    return new Promise((res, rej) => {
+      try { new THREE.GLTFExporter().parse(scene, out => res({ blob: new Blob([out], { type: "model/gltf-binary" }), names }), { binary: true }); }
+      catch (e) { rej(e); }
+    });
+  }
+  return { open, exportPieces, MODEL_EXT, weld, hashArrays };
+})();
+
+/* ------------------------------------------------------------------ */
+/* The page                                                            */
+/* ------------------------------------------------------------------ */
+(() => {
+  const $ = id => document.getElementById(id);
+  const REMOVE = 15, MAX_LABELS = 14, UNDO_STEPS = 50;
+  // colour mode: faces painted with the Clone tool carry this mark and the face their look is copied from
+  const CLONE = 16;
+  const NEW_COLOURS = ["#9c36b5", "#f59f00", "#0c8599", "#5c940d", "#d6336c", "#495057", "#3b5bdb", "#a61e4d", "#087f5b", "#e67700", "#364fc7"];
+  const canvas = $("view"), stage = $("stage");
+
+  /* ---------- renderer, scene, camera ---------- */
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  // One picture pixel per screen point by default: on high-density screens the full density draws two to four times
+  // as many pixels and makes everything slow. "Sharp view" brings it back.
+  let sharp = false; try { sharp = localStorage.getItem("cutpage:sharp") === "1"; } catch (e) {}
+  function pixelRatio() { return sharp ? Math.min(window.devicePixelRatio || 1, 2) : 1; }
+  renderer.setPixelRatio(pixelRatio());
+  const scene = new THREE.Scene(), pickScene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.01, 60);
+  camera.up.set(0, 0, 1);
+  scene.add(camera);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f96, 0.75));
+  const headLight = new THREE.DirectionalLight(0xffffff, 0.55);
+  headLight.position.set(0.6, 0.8, 0.4);
+  camera.add(headLight); camera.add(headLight.target); headLight.target.position.set(0, 0, -1);
+  const strengthUniform = { value: 0.7 };
+
+  function cssToken(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#dde1e6"; }
+  function applyTheme() { renderer.setClearColor(new THREE.Color(cssToken("--stage")), 1); requestRender(); }
+  try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme); } catch (e) {}
+  new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  /* ---------- state ---------- */
+  const S = {
+    figures: [], fig: null, figId: null,
+    nFaces: 0, labels: null, init: null, centroids: null, idx: null, nVerts: 0,
+    labelList: [], current: 1, hidden: {}, locked: new Uint8Array(256), counts: new Int32Array(256),
+    tool: "brush", sizeCm: 2, through: false, preview: false,
+    undo: [], redo: [], dirty: false, savedAt: null,
+    adj: null, grid: null,
+    clothGeo: null, clothMesh: null, pickCloth: null, previewMesh: null, pickPreview: null,
+    bodyMesh: null, pickBody: null, ctx: [], textures: {},
+    db: null, user: null, canSave: false, saving: false, scanned: 0, samples: 0,
+    orbit: { target: new THREE.Vector3(0, 0, 0.8), az: 0, el: 0.08, dist: 3 }, home: null,
+  };
+
+  /* ---------- render scheduling ---------- */
+  let renderQueued = false;
+  // frames drawn back to back (while turning, sliding or painting) give the drawing speed shown under "Speed"
+  const speed = { last: 0, sum: 0, n: 0, shownAt: 0 };
+  function requestRender() { if (!renderQueued) { renderQueued = true; requestAnimationFrame(t => { renderQueued = false; renderer.render(scene, camera); noteFrame(t); }); } }
+  function noteFrame(t) {
+    const dt = t - speed.last; speed.last = t;
+    if (dt > 0 && dt < 500) { speed.sum += dt; speed.n++; }
+    if (speed.n >= 20 && t - speed.shownAt > 1000) {
+      const fps = Math.round(1000 / (speed.sum / speed.n)); speed.sum = speed.n = 0; speed.shownAt = t;
+      const el = $("speedNote"); if (el) el.textContent = "While moving: about " + fps + " pictures a second" + (fps < 30 ? " (slow; under 30 feels laggy)" : "") + ".";
+    }
+  }
+
+  function resize() {
+    const w = stage.clientWidth, h = stage.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+    cameraChanged();
+  }
+  new ResizeObserver(resize).observe(stage);
+
+  /* ---------- camera control ---------- */
+  function placeCamera() {
+    const o = S.orbit, ce = Math.cos(o.el);
+    camera.position.set(o.target.x + o.dist * ce * Math.cos(o.az), o.target.y + o.dist * ce * Math.sin(o.az), o.target.z + o.dist * Math.sin(o.el));
+    camera.lookAt(o.target);
+    camera.updateMatrixWorld();
+  }
+  let pickTimer = 0;
+  function cameraChanged() {
+    placeCamera(); requestRender();
+    pick.dirty = true; clearTimeout(pickTimer); pickTimer = setTimeout(renderPick, 150);
+  }
+  function rotateBy(dx, dy) {
+    S.orbit.az -= dx * 0.008;
+    S.orbit.el = Math.max(-1.5, Math.min(1.5, S.orbit.el + dy * 0.008));
+    cameraChanged();
+  }
+  function panBy(dx, dy) {
+    const h = stage.clientHeight || 1;
+    const scale = 2 * S.orbit.dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / h;
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+    S.orbit.target.addScaledVector(right, -dx * scale).addScaledVector(up, dy * scale);
+    cameraChanged();
+  }
+  function zoomAt(cssX, cssY, factor) {
+    const o = S.orbit;
+    const nd = Math.max(0.15, Math.min(12, o.dist * factor));
+    const f = nd / o.dist;
+    const rect = canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector3((cssX / rect.width) * 2 - 1, -(cssY / rect.height) * 2 + 1, 0.5).unproject(camera);
+    const dir = ndc.sub(camera.position).normalize();
+    const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
+    const q = camera.position.clone().addScaledVector(dir, o.dist / Math.max(0.2, dir.dot(fwd)));
+    o.target.sub(q).multiplyScalar(f).add(q);
+    o.dist = nd;
+    cameraChanged();
+  }
+  function setView(name) {
+    if (!S.home) return;
+    const o = S.orbit, h = S.home;
+    if (name === "none") { cameraChanged(); return; }
+    if (name === "reset") { o.target.copy(h.target); o.dist = h.dist; o.az = 0; o.el = 0.08; }
+    else { o.az = { front: 0, back: Math.PI, left: Math.PI / 2, right: -Math.PI / 2 }[name]; o.el = 0.05; }
+    cameraChanged();
+  }
+
+  /* ---------- the hidden face-number picture ---------- */
+  const pick = { rt: null, buf: null, w: 0, h: 0, dirty: true };
+  // Marks live in a small picture with one pixel per face (red = piece label, green = colour label) and a palette
+  // picture (row 0 piece colours, row 1 recolour swatches, row 2 hidden pieces). A stroke rewrites a few bytes, not
+  // the big per-corner buffers, so painting stays quick on large figures.
+  const markUniforms = { uLab: { value: null }, uPal: { value: null }, uLabW: { value: 2048 }, uLabH: { value: 1 }, uUseHide: { value: 1 }, uPrev: { value: 0 }, uShowPieces: { value: 0 }, uClone: { value: null }, uHasClone: { value: 0 } };
+  const MARK_GLSL = "uniform sampler2D uLab; uniform sampler2D uPal; uniform float uLabW; uniform float uLabH; uniform float uUseHide; uniform float uPrev;\n" +
+    "vec4 labTexel(float id) { return texture2D(uLab, vec2((mod(id, uLabW) + 0.5) / uLabW, (floor(id / uLabW) + 0.5) / uLabH)); }\n" +
+    "vec4 palAt(float l, float row) { return texture2D(uPal, vec2((l + 0.5) / 256.0, (row + 0.5) / 3.0)); }\n" +
+    // a face is not drawn when its piece is hidden (outside preview) or would be cut away (in preview)
+    "float dropped(float cl) { vec4 h = palAt(cl, 2.0); return max(h.r * uUseHide, h.g * uPrev); }\n";
+  const pickMat = new THREE.ShaderMaterial({
+    side: THREE.DoubleSide, uniforms: markUniforms,
+    vertexShader: "attribute float fid; varying float vF; varying float vH;\n" + MARK_GLSL +
+      "void main(){ vF = fid; float cl = floor(labTexel(fid).r * 255.0 + 0.5); vH = dropped(cl); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+    fragmentShader: "precision highp float; varying float vF; varying float vH;\n" +
+      "void main(){ if (vH > 0.5) discard; float v = floor(vF + 0.5) + 1.0;\n" +
+      " float r = mod(v, 256.0); float g = mod(floor(v / 256.0), 256.0); float b = floor(v / 65536.0);\n" +
+      " gl_FragColor = vec4(r / 255.0, g / 255.0, b / 255.0, 1.0); }",
+  });
+  const blackMat = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide });
+  function renderPick() {
+    clearTimeout(pickTimer);
+    const sz = renderer.getDrawingBufferSize(new THREE.Vector2());
+    const w = sz.x | 0, h = sz.y | 0;
+    if (!w || !h || !S.fig) return;
+    if (!pick.rt || pick.w !== w || pick.h !== h) {
+      if (pick.rt) pick.rt.dispose();
+      pick.rt = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, format: THREE.RGBAFormat, type: THREE.UnsignedByteType });
+      pick.buf = new Uint8Array(w * h * 4); pick.w = w; pick.h = h;
+    }
+    const old = renderer.getClearColor(new THREE.Color()), oldA = renderer.getClearAlpha();
+    renderer.setRenderTarget(pick.rt);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear();
+    renderer.render(pickScene, camera);
+    renderer.readRenderTargetPixels(pick.rt, 0, 0, w, h, pick.buf);
+    viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    renderer.setRenderTarget(null);
+    renderer.setClearColor(old, oldA);
+    pick.dirty = false;
+  }
+  function ensurePick() { if (pick.dirty) renderPick(); }
+  // face number at a drawing-buffer pixel (x right, y down), or -1
+  function faceAt(px, py) {
+    px = px | 0; py = py | 0;
+    if (px < 0 || py < 0 || px >= pick.w || py >= pick.h) return -1;
+    const o = ((pick.h - 1 - py) * pick.w + px) * 4, b = pick.buf;
+    return (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16)) - 1;
+  }
+
+  /* ---------- geometry building ---------- */
+  // Raw little-endian file; where the host serves only text, the same bytes as base64 in "<name>.b64.txt".
+  async function fetchBin(url, Type) {
+    let r = await fetch(url).catch(() => null);
+    if (r && r.ok) return new Type(await r.arrayBuffer());
+    r = await fetch(url + ".b64.txt").catch(() => null);
+    if (!r || !r.ok) throw new Error("Could not load " + url);
+    const u8 = CutCore.b64ToBytes((await r.text()).trim());
+    return new Type(u8.buffer, 0, u8.length / Type.BYTES_PER_ELEMENT);
+  }
+  // Per-corner uv: "<name>.f32" as floats, or "<name>.u16" as whole numbers 0..65535 standing for 0..1 (half the size).
+  async function fetchUv(url) {
+    if (!/\.u16$/.test(url)) return fetchBin(url, Float32Array);
+    const q = await fetchBin(url, Uint16Array), out = new Float32Array(q.length);
+    for (let i = 0; i < q.length; i++) out[i] = q[i] / 65535;
+    return out;
+  }
+  async function fetchJson(url) {
+    const r = await fetch(url); if (!r.ok) throw new Error("Could not load " + url + " (" + r.status + ")");
+    return r.json();
+  }
+  function loadTexture(url) {
+    if (S.textures[url]) return S.textures[url];
+    S.textures[url] = new Promise((res, rej) => new THREE.TextureLoader().load(url, t => {
+      t.flipY = false; t.encoding = THREE.sRGBEncoding; t.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+      res(t);
+    }, undefined, () => rej(new Error("Could not load " + url))));
+    return S.textures[url];
+  }
+  // Un-indexed geometry in file face order with smooth normals and per-corner uv.
+  function cornerGeometry(pos, idx, uv) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setIndex(new THREE.BufferAttribute(idx, 1));
+    g.computeVertexNormals();
+    const flat = g.toNonIndexed(); g.dispose();
+    if (uv) flat.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    flat.computeBoundingSphere();
+    return flat;
+  }
+  function labelMaterial(texture, strength, uniforms) {
+    const m = new THREE.MeshLambertMaterial({ map: texture, side: THREE.DoubleSide });
+    const un = uniforms || markUniforms;
+    m.onBeforeCompile = sh => {
+      sh.uniforms.uStrength = strength || strengthUniform;
+      for (const k in un) sh.uniforms[k] = un[k];
+      sh.vertexShader = sh.vertexShader
+        .replace("#include <common>", "#include <common>\nattribute float fid; attribute float corner; uniform sampler2D uClone; uniform float uHasClone; varying vec4 vLab; varying vec4 vRec; varying float vHid; varying float vWall; varying float vPiece;\n" + MARK_GLSL)
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\n" +
+          "vec4 lt = labTexel(fid); float cl = floor(lt.r * 255.0 + 0.5); float rl = floor(lt.g * 255.0 + 0.5);\n" +
+          "vec4 pc = palAt(cl, 0.0); vec4 pr = palAt(rl, 1.0);\n" +
+          "vLab = vec4(pow(pc.rgb, vec3(2.2)), pc.a); vRec = vec4(pow(pr.rgb, vec3(2.2)), pr.a); vHid = dropped(cl); vWall = lt.b; vPiece = lt.a;\n" +
+          // a cloned face draws the texture of its source face: each corner takes the source corner's texture place
+          "#ifdef USE_UV\nif (uHasClone > 0.5 && rl > 15.5) { vec2 cw = vec2(1.0 / uLabW, 1.0 / (4.0 * uLabH)); vec2 cp = vec2(mod(fid, uLabW) + 0.5, floor(fid / uLabW) + 0.5) * cw;\n" +
+          " vec4 s = floor(texture2D(uClone, cp) * 255.0 + 0.5); float sid = s.r + s.g * 256.0 + s.b * 65536.0 - 1.0;\n" +
+          " if (sid >= 0.0) { vec2 sp = vec2(mod(sid, uLabW) + 0.5, floor(sid / uLabW) + 0.5 + (1.0 + corner) * uLabH) * cw; vec4 q = floor(texture2D(uClone, sp) * 255.0 + 0.5);\n" +
+          " vUv = (uvTransform * vec3((q.r + q.g * 256.0) / 65535.0, (q.b + q.a * 256.0) / 65535.0, 1.0)).xy; } }\n#endif");
+      sh.fragmentShader = sh.fragmentShader
+        .replace("#include <common>", "#include <common>\nvarying vec4 vLab; varying vec4 vRec; varying float vHid; varying float vWall; varying float vPiece; uniform float uStrength; uniform float uPrev; uniform float uShowPieces;")
+        .replace("void main() {", "void main() {\nif (vHid > 0.5) discard;")
+        .replace("#include <map_fragment>", "#include <map_fragment>\n" +
+          // recolour preview: the swatch colour, keeping a little of the weave's light and dark
+          "if (vRec.a > 0.5) { float l = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722)); float lt = max(dot(vRec.rgb, vec3(0.2126, 0.7152, 0.0722)), 0.02);\n" +
+          " diffuseColor.rgb = vRec.rgb * clamp(mix(1.0, l / lt, 0.35), 0.5, 1.6); }\n" +
+          "diffuseColor.rgb = mix(diffuseColor.rgb, vLab.rgb, vLab.a * uStrength * (1.0 - uPrev));\n" +
+          // walls show as a bright yellow line (not in Preview)
+          "if (vWall > 0.5 && uPrev < 0.5) diffuseColor.rgb = vec3(1.0, 0.85, 0.05);\n" +
+          // found pieces, each in its own colour, when "Show found pieces" is on; painted cloth keeps its paint colour
+          "if (uShowPieces > 0.5 && vPiece > 0.0 && vLab.a < 0.5) diffuseColor.rgb = mix(diffuseColor.rgb, 0.5 + 0.5 * cos(6.2831 * (vec3(0.0, 0.33, 0.67) + vPiece * 37.1)), 0.7);");
+    };
+    return m;
+  }
+
+  function disposeFigure() {
+    for (const o of [S.clothMesh, S.bodyMesh, S.previewMesh, ...S.ctx.map(c => c.mesh)]) if (o) { scene.remove(o); o.geometry.dispose(); }
+    for (const o of [S.pickCloth, S.pickBody, S.pickPreview, ...S.ctx.map(c => c.pick)]) if (o) pickScene.remove(o);
+    S.clothMesh = S.bodyMesh = S.previewMesh = S.pickCloth = S.pickBody = S.pickPreview = null; S.ctx = [];
+    S.adj = null; S.grid = null; S.undo = []; S.redo = [];
+  }
+
+  // Each load has a number; a load overtaken by a newer one (a figure picked while another was still loading) stops
+  // before it draws anything, so two figures never end up in the view together.
+  let loadSeq = 0;
+  async function loadFigure(entry) {
+    if (entry.local) return loadLocal(entry);
+    const my = ++loadSeq;
+    showLoading("Loading the " + entry.name + "…");
+    disposeFigure();
+    const base = "data/" + entry.folder + "/";
+    const fig = await fetchJson(base + "figure.json");
+    const c = fig.cloth;
+    const [cpos, cidx, cuv, cinit, bpos, bidx, ctex] = await Promise.all([
+      fetchBin(base + c.pos, Float32Array), fetchBin(base + c.idx, Uint32Array), fetchUv(base + c.uv),
+      fetchBin(base + c.init, Uint8Array), fetchBin(base + fig.body.pos, Float32Array), fetchBin(base + fig.body.idx, Uint32Array),
+      loadTexture(base + c.texture)]);
+    if (my !== loadSeq) return;
+    // pieces found by the picture-cutting step, if that figure has them (one number per face)
+    let pieces = null;
+    try { pieces = await fetchBin(base + "pieces.u32", Uint32Array); if (pieces.length !== c.nFaces) pieces = null; } catch (e) { pieces = null; }
+    if (my !== loadSeq) return;
+    const ctxLoad = () => Promise.all((fig.context || []).map(async p => {
+      const [pp, pi, pu, pt] = await Promise.all([fetchBin(base + p.pos, Float32Array), fetchBin(base + p.idx, Uint32Array),
+        p.uv ? fetchBin(base + p.uv, Float32Array) : null, p.texture ? loadTexture(base + p.texture) : null]);
+      return { name: p.name, pos: pp, idx: pi, uv: pu, tex: pt, visible: !!p.visible };
+    }));
+    await buildFigure(my, fig, { cpos, cidx, cuv, cinit, bpos, bidx, ctex, pieces, ctxLoad });
+  }
+  // a model the person dropped in: everything is already in memory
+  async function loadLocal(entry) {
+    const my = ++loadSeq;
+    showLoading("Opening " + entry.name + "…");
+    disposeFigure();
+    if (!entry.model) {
+      const files = await keptModelFiles(entry.id);
+      if (my !== loadSeq) return;
+      entry.model = await ModelIO.open(files);
+      if (my !== loadSeq) return;
+    }
+    const m = entry.model;
+    await buildFigure(my, m.fig, { cpos: m.pos, cidx: m.idx, cuv: m.uv, cinit: new Uint8Array(m.fig.cloth.nFaces), bpos: new Float32Array(0), bidx: new Uint32Array(0), ctex: m.tex, pieces: m.pieces || null, ctxLoad: async () => [] });
+  }
+
+  async function buildFigure(my, fig, d) {
+    const { cpos, cidx, cuv, cinit, bpos, bidx, ctex, pieces } = d;
+    const c = fig.cloth;
+    disposeFigure();
+    if (cidx.length !== c.nFaces * 3 || cinit.length !== c.nFaces || cuv.length !== c.nFaces * 6) throw new Error("The files for " + fig.name + " do not match their face count.");
+    S.fig = fig; S.figId = fig.id; S.nFaces = c.nFaces; S.nVerts = c.nVerts; S.idx = cidx;
+    S.init = cinit;
+    const cutList = fig.labels.map(l => ({ id: l.id, name: l.name, color: l.color }));
+    if (!cutList.some(l => l.id === REMOVE)) cutList.push({ id: REMOVE, name: "Remove", color: "#c92a2a" });
+    S.layers = { cut: makeLayer("cut", cinit.slice(), cutList), colour: makeLayer("colour", new Uint8Array(S.nFaces), []) };
+    S.hidden = {}; S.hadColourSave = false; S.hadCloneSave = false; S.texPixels = null; S.faceLab = S.faceNrm = null;
+    S.walls = new Uint8Array(S.nFaces); S.wallList = [];
+    S.cloneSrc = new Int32Array(S.nFaces).fill(-1); S.clone = { src: null, offset: null };
+    if (S.cloneTex) { S.cloneTex.dispose(); S.cloneTex = null; } markUniforms.uClone.value = null; markUniforms.uHasClone.value = 0; $("cloneMark").hidden = true;
+    useLayer("cut", true);
+
+    // typical edge length (from a spread sample of faces), used to thin the brush's pixel scan up close
+    { let sum = 0, cnt = 0; const step = Math.max(1, Math.floor(S.nFaces / 4000));
+      for (let f = 0; f < S.nFaces; f += step) { const a = cidx[f * 3] * 3, b = cidx[f * 3 + 1] * 3; sum += Math.hypot(cpos[a] - cpos[b], cpos[a + 1] - cpos[b + 1], cpos[a + 2] - cpos[b + 2]); cnt++; }
+      S.edgeLen = Math.max(0.0005, sum / Math.max(1, cnt)); }
+    // face centres
+    S.centroids = new Float32Array(S.nFaces * 3);
+    for (let f = 0; f < S.nFaces; f++) for (let k = 0; k < 3; k++) {
+      const v = cidx[f * 3 + k] * 3;
+      S.centroids[f * 3] += cpos[v] / 3; S.centroids[f * 3 + 1] += cpos[v + 1] / 3; S.centroids[f * 3 + 2] += cpos[v + 2] / 3;
+    }
+
+    // cloth
+    const g = cornerGeometry(cpos, cidx, cuv);
+    const fid = new Float32Array(S.nFaces * 3);
+    for (let f = 0; f < S.nFaces; f++) fid[f * 3] = fid[f * 3 + 1] = fid[f * 3 + 2] = f;
+    g.setAttribute("fid", new THREE.BufferAttribute(fid, 1));
+    const corner = new Float32Array(S.nFaces * 3);
+    for (let f = 0; f < S.nFaces; f++) { corner[f * 3 + 1] = 1; corner[f * 3 + 2] = 2; }
+    g.setAttribute("corner", new THREE.BufferAttribute(corner, 1));
+    if (!renderer.capabilities.maxVertexTextures) throw new Error("This browser's graphics cannot show the paint marks. Try another browser.");
+    const LW = 2048, LH = Math.max(1, Math.ceil(S.nFaces / LW));
+    if (S.labTex) S.labTex.dispose();
+    S.labTex = new THREE.DataTexture(new Uint8Array(LW * LH * 4), LW, LH, THREE.RGBAFormat, THREE.UnsignedByteType);
+    S.labTex.magFilter = S.labTex.minFilter = THREE.NearestFilter; S.labTex.generateMipmaps = false; S.labTex.flipY = false;
+    if (!S.palTex) {
+      S.palTex = new THREE.DataTexture(new Uint8Array(256 * 3 * 4), 256, 3, THREE.RGBAFormat, THREE.UnsignedByteType);
+      S.palTex.magFilter = S.palTex.minFilter = THREE.NearestFilter; S.palTex.generateMipmaps = false; S.palTex.flipY = false;
+    }
+    S.pieces = pieces;
+    if (pieces) { const dd = S.labTex.image.data; for (let f = 0; f < S.nFaces; f++) dd[f * 4 + 3] = pieces[f] % 251 + 1; }
+    markUniforms.uLab.value = S.labTex; markUniforms.uPal.value = S.palTex; markUniforms.uLabW.value = LW; markUniforms.uLabH.value = LH;
+    S.clothGeo = g;
+    S.clothMesh = new THREE.Mesh(g, labelMaterial(ctex)); scene.add(S.clothMesh);
+    S.pickCloth = new THREE.Mesh(g, pickMat); pickScene.add(S.pickCloth);
+    S.clothTex = ctex;
+
+    // body (a dropped model has none: all of it is paintable)
+    const bg = new THREE.BufferGeometry();
+    bg.setAttribute("position", new THREE.BufferAttribute(bpos, 3)); bg.setIndex(new THREE.BufferAttribute(bidx, 1)); if (bidx.length) bg.computeVertexNormals();
+    S.bodyMesh = new THREE.Mesh(bg, new THREE.MeshLambertMaterial({ color: new THREE.Color((fig.body && fig.body.color) || "#b98b6e").convertSRGBToLinear() }));
+    S.bodyMesh.visible = bidx.length > 0;
+    scene.add(S.bodyMesh);
+    S.pickBody = new THREE.Mesh(bg, blackMat); S.pickBody.visible = bidx.length > 0; pickScene.add(S.pickBody);
+
+    // context pieces
+    const parts = await d.ctxLoad();
+    const loaded = parts.map(p => {
+      const pg = cornerGeometry(p.pos, p.idx, p.uv);
+      const mesh = new THREE.Mesh(pg, new THREE.MeshLambertMaterial(p.tex ? { map: p.tex, side: THREE.DoubleSide } : { color: 0x888888, side: THREE.DoubleSide }));
+      const pk = new THREE.Mesh(pg, blackMat);
+      mesh.visible = pk.visible = p.visible;
+      scene.add(mesh); pickScene.add(pk);
+      return { name: p.name, mesh, pick: pk };
+    });
+    if (my !== loadSeq) { loaded.forEach(c => { scene.remove(c.mesh); pickScene.remove(c.pick); c.mesh.geometry.dispose(); }); return; }
+    S.ctx = loaded;
+
+    // camera home: fit the body, or the whole model when there is no body
+    const fitGeo = bidx.length ? bg : g;
+    fitGeo.computeBoundingBox();
+    const bb = fitGeo.boundingBox, ctr = bb.getCenter(new THREE.Vector3()), size = bb.getSize(new THREE.Vector3());
+    const fov = THREE.MathUtils.degToRad(camera.fov);
+    const fitH = (size.z / 2) / Math.tan(fov / 2), fitW = (Math.max(size.x, size.y) / 2) / (Math.tan(fov / 2) * Math.max(0.3, camera.aspect));
+    S.home = { target: ctr.clone(), dist: Math.max(fitH, fitW) * 1.12 + size.x / 2 };
+    S.homeFit = { fitH, halfW: Math.max(size.x, size.y) / 2, depth: size.x / 2, height: size.z };
+    S.preview = false; $("preview").checked = false; document.body.classList.remove("preview-on");
+
+    refreshAllColours(); recountAll(); buildLabelsUI(); buildExtrasUI(); updateUndoUI(); updateWallUI();
+    $("piecesBox").hidden = !S.pieces; updateFinderUI();
+    $("faceTotal").textContent = S.nFaces.toLocaleString("en-US");
+    $("faceWord").textContent = fig.local ? "faces" : "cloth faces";
+    setView("reset");
+    hideLoading(); document.body.classList.remove("nomodel");
+    renderPick();
+    await openSaved();
+  }
+
+  /* ---------- colours, counts, visibility ---------- */
+  const colourCache = {};
+  function linColour(hex) {
+    if (!colourCache[hex]) { const c = new THREE.Color(hex).convertSRGBToLinear(); colourCache[hex] = [c.r, c.g, c.b]; }
+    return colourCache[hex];
+  }
+  // Two layers of marks share one set of tools: "cut" (pieces to keep) and "colour" (places to recolour).
+  function makeLayer(name, labels, list) {
+    return { name, labels, list, counts: new Int32Array(256), locked: new Uint8Array(256), current: list.length ? list[0].id : 1 };
+  }
+  function useLayer(name, quiet) {
+    const L = S.layers[name];
+    S.layer = name; S.labels = L.labels; S.labelList = L.list; S.counts = L.counts; S.locked = L.locked; S.current = L.current;
+    strengthUniform.value = name === "cut" ? +$("strength").value / 100 : 0;
+    document.querySelectorAll(".modes button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === name)));
+    $("tool-dropper").hidden = $("tool-clone").hidden = name !== "colour";
+    if (name !== "colour" && (S.tool === "dropper" || S.tool === "clone")) setTool("brush");
+    if (!quiet) { buildLabelsUI(); requestRender(); }
+  }
+  function cutHidden(f) { return !!S.hidden[S.layers.cut.labels[f]]; }
+  function entryOf(layer, id) { return layer.list.find(l => l.id === id); }
+  function refreshPalette() {
+    const d = S.palTex.image.data; d.fill(0);
+    const put = (row, l, hex) => { const c = new THREE.Color(hex), o = (row * 256 + l) * 4; d[o] = Math.round(c.r * 255); d[o + 1] = Math.round(c.g * 255); d[o + 2] = Math.round(c.b * 255); d[o + 3] = 255; };
+    S.layers.cut.list.forEach(l => put(0, l.id, l.color));
+    S.layers.colour.list.forEach(l => put(1, l.id, l.color));
+    for (const k in S.hidden) if (S.hidden[k]) d[(2 * 256 + +k) * 4] = 255;
+    for (let l = 0; l < 256; l++) if (!CutCore.isKept(l, S.fig.unpainted)) d[(2 * 256 + l) * 4 + 1] = 255;
+    S.palTex.needsUpdate = true;
+  }
+  function refreshAllColours() {
+    const d = S.labTex.image.data, a = S.layers.cut.labels, b = S.layers.colour.labels;
+    for (let f = 0; f < S.nFaces; f++) { d[f * 4] = a[f]; d[f * 4 + 1] = b[f]; }
+    S.labTex.needsUpdate = true; refreshPalette();
+    if (S.cloneTex || anyClone()) { ensureCloneTex(); cloneTexFaces(null); }
+    if (S.preview) buildPreview();
+    requestRender();
+  }
+  function refreshFaces(faces) {
+    if (!faces.length) return;
+    const d = S.labTex.image.data, a = S.layers.cut.labels, b = S.layers.colour.labels;
+    for (let i = 0; i < faces.length; i++) { const f = faces[i]; d[f * 4] = a[f]; d[f * 4 + 1] = b[f]; }
+    S.labTex.needsUpdate = true; requestRender();
+    if (S.cloneTex) cloneTexFaces(faces);
+  }
+  function recountLayer(L) { L.counts.fill(0); for (let f = 0; f < S.nFaces; f++) L.counts[L.labels[f]]++; }
+  function recountAll() { recountLayer(S.layers.cut); recountLayer(S.layers.colour); }
+  function anyHidden() { for (const k in S.hidden) if (S.hidden[k]) return true; return false; }
+
+  /* ---------- painting core ---------- */
+  // A stroke collects changed faces with their first old label.
+  let stroke = null;
+  let sampleMark = null, sampleNo = 0;
+  function beginStroke(label) {
+    stroke = { label, faces: [], old: [], seen: new Map(), layer: S.layers[S.layer] };
+  }
+  function applyFaces(list, n) {
+    if (!stroke) return;
+    const L = stroke.label, changed = [], cl = stroke.clone;
+    for (let i = 0; i < n; i++) {
+      const f = list[i], old = S.labels[f];
+      if (S.locked[old]) continue;
+      let src = -1;
+      if (cl) { if (cl.done.has(f)) continue; src = cloneSourceOf(f, cl); if (src < 0) continue; cl.done.add(f); }
+      else if (old === L) continue;
+      if (!stroke.seen.has(f)) { stroke.seen.set(f, old); stroke.faces.push(f); stroke.old.push(old); if (cl) cl.srcOld.push(S.cloneSrc[f]); }
+      if (cl) { S.cloneSrc[f] = src; cl.srcNew.set(f, src); }
+      S.counts[old]--; S.counts[L]++; S.labels[f] = L; changed.push(f);
+    }
+    if (cl && changed.length) ensureCloneTex();
+    refreshFaces(changed);
+    return changed.length;
+  }
+  /* ---------- clone ---------- */
+  // The Clone tool copies the look of one area onto another, every colour of its texture, like a photo editor's clone
+  // stamp: Alt-click (or the first tap) marks where to copy from; the first stroke after that fixes the distance on
+  // the screen between the brush and that point, and every face the brush paints takes the face seen that distance
+  // away as its source. Each cloned face keeps its source face's number (saved with the paint), and the view draws the
+  // source face's texture on it.
+  function anyClone() { const c = S.layers.colour.labels; for (let f = 0; f < S.nFaces; f++) if (c[f] === CLONE) return true; return false; }
+  function cloneSourceOf(f, cl) {
+    const e = viewProj.elements, c = S.centroids, x = c[f * 3], y = c[f * 3 + 1], z = c[f * 3 + 2];
+    const w = e[3] * x + e[7] * y + e[11] * z + e[15]; if (w <= 0) return -1;
+    const sx = ((e[0] * x + e[4] * y + e[8] * z + e[12]) / w + 1) / 2 * pick.w + cl.ox, sy = (1 - (e[1] * x + e[5] * y + e[9] * z + e[13]) / w) / 2 * pick.h + cl.oy;
+    let s = faceAt(sx, sy);
+    if (s < 0) return -1;
+    // a source that is itself cloned (painted earlier, or in this stroke) passes on its own source
+    if (S.layers.colour.labels[s] === CLONE && S.cloneSrc[s] >= 0) s = S.cloneSrc[s];
+    return s === f ? -1 : s;
+  }
+  function setCloneSource(px, py) {
+    ensurePick();
+    if (faceAt(px, py) < 0) { toast("Click on the model to choose where to copy from."); return false; }
+    S.clone = { src: { x: px, y: py }, offset: null };
+    placeCloneMark(px, py);
+    toast("Copying from here. Now paint where this look should go. Alt-click to copy from somewhere else.", 5000);
+    return true;
+  }
+  function beginClone(px, py) {
+    if (!S.clone.src) return false;
+    if (!S.clone.offset) S.clone.offset = { x: S.clone.src.x - px, y: S.clone.src.y - py };
+    beginStroke(CLONE);
+    stroke.clone = { ox: S.clone.offset.x, oy: S.clone.offset.y, done: new Set(), srcOld: [], srcNew: new Map() };
+    return true;
+  }
+  function placeCloneMark(px, py) {
+    const m = $("cloneMark"), k = canvas.clientWidth / (pick.w || 1);
+    m.style.left = (px * k).toFixed(1) + "px"; m.style.top = (py * k).toFixed(1) + "px"; m.hidden = false;
+  }
+  // one texture for the view: row block 0 holds each face's source face number plus one (0 = none), blocks 1-3 the
+  // texture place of each face's three corners as 16-bit numbers
+  function ensureCloneTex() {
+    if (S.cloneTex) return;
+    const LW = markUniforms.uLabW.value, LH = markUniforms.uLabH.value, d = new Uint8Array(LW * LH * 4 * 4);
+    const uv = S.clothGeo.attributes.uv ? S.clothGeo.attributes.uv.array : null;
+    if (uv) for (let f = 0; f < S.nFaces; f++) for (let k = 0; k < 3; k++) {
+      const o = ((1 + k) * LH * LW + f) * 4;
+      const u = Math.round(Math.min(1, Math.max(0, uv[f * 6 + k * 2])) * 65535), v = Math.round(Math.min(1, Math.max(0, uv[f * 6 + k * 2 + 1])) * 65535);
+      d[o] = u & 255; d[o + 1] = u >> 8; d[o + 2] = v & 255; d[o + 3] = v >> 8;
+    }
+    S.cloneTex = new THREE.DataTexture(d, LW, LH * 4, THREE.RGBAFormat, THREE.UnsignedByteType);
+    S.cloneTex.magFilter = S.cloneTex.minFilter = THREE.NearestFilter; S.cloneTex.generateMipmaps = false; S.cloneTex.flipY = false;
+    markUniforms.uClone.value = S.cloneTex; markUniforms.uHasClone.value = 1;
+  }
+  function cloneTexFaces(faces) {
+    const d = S.cloneTex.image.data, c = S.layers.colour.labels, put = f => { const v = c[f] === CLONE && S.cloneSrc[f] >= 0 ? S.cloneSrc[f] + 1 : 0, o = f * 4; d[o] = v & 255; d[o + 1] = (v >> 8) & 255; d[o + 2] = (v >> 16) & 255; d[o + 3] = 255; };
+    if (faces) for (let i = 0; i < faces.length; i++) put(faces[i]); else for (let f = 0; f < S.nFaces; f++) put(f);
+    S.cloneTex.needsUpdate = true; requestRender();
+  }
+  // saved form: [face, source face] pairs for every cloned face, little-endian 32-bit, base64
+  function clonePairs() {
+    const c = S.layers.colour.labels, out = [];
+    for (let f = 0; f < S.nFaces; f++) if (c[f] === CLONE && S.cloneSrc[f] >= 0) out.push(f, S.cloneSrc[f]);
+    return Uint32Array.from(out);
+  }
+  function clonesB64() { const p = clonePairs(); return p.length ? CutCore.bytesToB64(new Uint8Array(p.buffer)) : ""; }
+  function applyClones(b64) {
+    S.cloneSrc.fill(-1);
+    if (b64) { const u8 = CutCore.b64ToBytes(b64), p = new Uint32Array(u8.buffer, u8.byteOffset, u8.length >> 2); for (let i = 0; i + 1 < p.length; i += 2) if (p[i] < S.nFaces && p[i + 1] < S.nFaces) S.cloneSrc[p[i]] = p[i + 1]; }
+    if (S.cloneTex || anyClone()) { ensureCloneTex(); cloneTexFaces(null); }
+  }
+  function endStroke(message) {
+    if (!stroke) return 0;
+    const st = stroke; stroke = null;
+    if (!st.faces.length) return 0;
+    pushUndo(st.layer, Uint32Array.from(st.faces), Uint8Array.from(st.old), new Uint8Array(st.faces.length).fill(st.label),
+      st.clone ? { old: Int32Array.from(st.clone.srcOld), neu: Int32Array.from(st.faces, f => st.clone.srcNew.get(f)) } : null);
+    // the face-number picture only needs redrawing when the stroke made cloth appear or disappear
+    let vis = false;
+    if (st.layer.name === "cut") { vis = notDrawn(st.label); for (let i = 0; !vis && i < st.old.length; i++) vis = notDrawn(st.old[i]); }
+    afterChange(vis);
+    return st.faces.length;
+  }
+  function cancelStroke() {
+    if (!stroke) return;
+    const st = stroke; stroke = null;
+    if (st.clone) st.faces.forEach((f, i) => { S.cloneSrc[f] = st.clone.srcOld[i]; });
+    setLayerFaces(st.layer, st.faces, st.old); updateCountsUI();
+  }
+  // a piece label the view does not draw right now (hidden, or cut away in Preview)
+  function notDrawn(l) { return S.preview ? !CutCore.isKept(l, S.fig.unpainted) : !!S.hidden[l]; }
+  function afterChange(visChanged) {
+    S.dirty = true; updateCountsUI(); updateUndoUI(); updateSaveStatus(); scheduleDraft();
+    if (S.preview) buildPreview();
+    // redrawn a moment later (or at the next stroke if that comes first), so it never holds up the brush
+    if (visChanged !== false && (S.preview || anyHidden())) { pick.dirty = true; clearTimeout(pickTimer); pickTimer = setTimeout(renderPick, 150); }
+  }
+  function pushUndo(layer, faces, old, neu, src) {
+    S.undo.push({ layer, faces, old, neu, src });
+    if (S.undo.length > UNDO_STEPS) S.undo.shift();
+    S.redo = [];
+  }
+  function setLayerFaces(layer, faces, vals) {
+    for (let i = 0; i < faces.length; i++) { const f = faces[i]; layer.counts[layer.labels[f]]--; layer.labels[f] = vals[i]; layer.counts[vals[i]]++; }
+    refreshFaces(faces);
+  }
+  // apply a whole set of per-face changes as one undo step (fill holes, smooth edges)
+  function applyBatch(faces, neu) {
+    const L = S.layers[S.layer], old = new Uint8Array(faces.length);
+    for (let i = 0; i < faces.length; i++) old[i] = L.labels[faces[i]];
+    if (!faces.length) return 0;
+    setLayerFaces(L, faces, neu); pushUndo(L, Uint32Array.from(faces), old, Uint8Array.from(neu)); afterChange();
+    return faces.length;
+  }
+  function undo() {
+    const e = S.undo.pop(); if (!e) return;
+    if (e.src) e.faces.forEach((f, i) => { S.cloneSrc[f] = e.src.old[i]; });
+    setLayerFaces(e.layer, e.faces, e.old); S.redo.push(e); afterChange();
+  }
+  function redo() {
+    const e = S.redo.pop(); if (!e) return;
+    if (e.src) e.faces.forEach((f, i) => { S.cloneSrc[f] = e.src.neu[i]; });
+    setLayerFaces(e.layer, e.faces, e.neu); S.undo.push(e); afterChange();
+  }
+
+  // brush footprint at a drawing-buffer pixel
+  const tmpV = new THREE.Vector3();
+  let footprint = new Uint32Array(4096);
+  function faceDepth(f) {
+    tmpV.set(S.centroids[f * 3], S.centroids[f * 3 + 1], S.centroids[f * 3 + 2]).applyMatrix4(camera.matrixWorldInverse);
+    return Math.max(0.01, -tmpV.z);
+  }
+  function focalPx() { return (pick.h / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)); }
+  function brushRadiusPx(f) { return Math.max(1, (S.sizeCm / 200) * focalPx() / faceDepth(f)); }
+  // The brush is a ball around the touched point: faces seen inside the circle count only when they are
+  // within the brush size of that point in 3D, so cloth far behind an outline is never picked up.
+  const DEPTH_SLACK = 0.003;
+  function brushSample(px, py) {
+    const hit = faceAt(px, py);
+    if (hit < 0) return 0;
+    if (S.testHits) S.testHits.push(hit);
+    const r = brushRadiusPx(hit), r2 = r * r, ri = Math.ceil(r);
+    const C = S.centroids, hx = C[hit * 3], hy = C[hit * 3 + 1], hz = C[hit * 3 + 2];
+    const rad = S.sizeCm / 200, lim = rad * 1.25 + DEPTH_SLACK, lim2 = lim * lim;
+    // Up close a face covers many pixels: look at every few pixels only, still at least three per face edge.
+    const stride = Math.max(1, Math.floor(r * S.edgeLen / rad / 3));
+    if (!sampleMark || sampleMark.length !== S.nFaces) sampleMark = new Uint32Array(S.nFaces);
+    sampleNo++;
+    let n = 0;
+    const x0 = Math.max(0, (px - ri) | 0), x1 = Math.min(pick.w - 1, (px + ri) | 0);
+    const y0 = Math.max(0, (py - ri) | 0), y1 = Math.min(pick.h - 1, (py + ri) | 0);
+    const b = pick.buf, W = pick.w, H = pick.h;
+    S.scanned += Math.ceil((y1 - y0 + 1) / stride) * Math.ceil((x1 - x0 + 1) / stride); S.samples++;
+    for (let y = y0; y <= y1; y += stride) {
+      const dy = y - py, row = (H - 1 - y) * W;
+      for (let x = x0; x <= x1; x += stride) {
+        const dx = x - px; if (dx * dx + dy * dy > r2) continue;
+        const o = (row + x) * 4, id = (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16)) - 1;
+        if (id < 0 || sampleMark[id] === sampleNo) continue;
+        sampleMark[id] = sampleNo;
+        const ex = C[id * 3] - hx, ey = C[id * 3 + 1] - hy, ez = C[id * 3 + 2] - hz;
+        if (ex * ex + ey * ey + ez * ez > lim2) continue;
+        if (n >= footprint.length) { const nf = new Uint32Array(footprint.length * 2); nf.set(footprint); footprint = nf; }
+        footprint[n++] = id;
+      }
+    }
+    if (S.through) n = addThrough(hit, rad, n);
+    else n = addSteep(hit, rad, px, py, r, n);
+    applyFaces(footprint, n);
+    return r;
+  }
+  // every face whose centre lies within rad of the hit face's centre (all layers)
+  function buildGrid() {
+    const cell = 0.04, m = new Map(), c = S.centroids;
+    for (let f = 0; f < S.nFaces; f++) {
+      const k = Math.floor(c[f * 3] / cell) + "," + Math.floor(c[f * 3 + 1] / cell) + "," + Math.floor(c[f * 3 + 2] / cell);
+      let a = m.get(k); if (!a) m.set(k, a = []); a.push(f);
+    }
+    S.grid = { cell, m };
+  }
+  function addThrough(hit, rad, n) {
+    if (!S.grid) buildGrid();
+    const { cell, m } = S.grid, c = S.centroids;
+    const hx = c[hit * 3], hy = c[hit * 3 + 1], hz = c[hit * 3 + 2], r2 = rad * rad, span = Math.ceil(rad / cell);
+    const ix = Math.floor(hx / cell), iy = Math.floor(hy / cell), iz = Math.floor(hz / cell);
+    for (let a = -span; a <= span; a++) for (let b2 = -span; b2 <= span; b2++) for (let d = -span; d <= span; d++) {
+      const list = m.get((ix + a) + "," + (iy + b2) + "," + (iz + d)); if (!list) continue;
+      for (const f of list) {
+        if (sampleMark[f] === sampleNo) continue;
+        const dx = c[f * 3] - hx, dy = c[f * 3 + 1] - hy, dz = c[f * 3 + 2] - hz;
+        if (dx * dx + dy * dy + dz * dz > r2) continue;
+        if (cutHidden(f)) continue;
+        if (S.preview && !CutCore.isKept(S.layers.cut.labels[f], S.fig.unpainted)) continue;
+        sampleMark[f] = sampleNo;
+        if (n >= footprint.length) { const nf = new Uint32Array(footprint.length * 2); nf.set(footprint); footprint = nf; }
+        footprint[n++] = f;
+      }
+    }
+    return n;
+  }
+  // Faces at a steep angle show few or no pixels in the face-number picture. Take every face near the touched
+  // point whose centre falls inside the brush circle and lies no more than a few millimetres behind what is seen there.
+  const STEEP_TOL = 0.005;
+  function addSteep(hit, rad, px, py, rpx, n) {
+    if (!S.grid) buildGrid();
+    const { cell, m } = S.grid, c = S.centroids;
+    const hx = c[hit * 3], hy = c[hit * 3 + 1], hz = c[hit * 3 + 2], r2 = (rad * 1.25) * (rad * 1.25), span = Math.ceil(rad * 1.25 / cell);
+    const ix = Math.floor(hx / cell), iy = Math.floor(hy / cell), iz = Math.floor(hz / cell);
+    const e = viewProj.elements, W = pick.w, H = pick.h, rr = rpx * rpx, b = pick.buf;
+    for (let a = -span; a <= span; a++) for (let b2 = -span; b2 <= span; b2++) for (let d = -span; d <= span; d++) {
+      const list = m.get((ix + a) + "," + (iy + b2) + "," + (iz + d)); if (!list) continue;
+      for (const f of list) {
+        if (sampleMark[f] === sampleNo) continue;
+        const x = c[f * 3], y = c[f * 3 + 1], z = c[f * 3 + 2];
+        const dx = x - hx, dy = y - hy, dz = z - hz;
+        if (dx * dx + dy * dy + dz * dz > r2) continue;
+        const cw = e[3] * x + e[7] * y + e[11] * z + e[15]; if (cw <= 0) continue;
+        const sx = ((e[0] * x + e[4] * y + e[8] * z + e[12]) / cw + 1) / 2 * W, sy = (1 - (e[1] * x + e[5] * y + e[9] * z + e[13]) / cw) / 2 * H;
+        const qx = sx - px, qy = sy - py; if (qx * qx + qy * qy > rr) continue;
+        const ux = sx | 0, uy = sy | 0; if (ux < 0 || uy < 0 || ux >= W || uy >= H) continue;
+        const o = ((H - 1 - uy) * W + ux) * 4, seen = (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16)) - 1;
+        if (seen < 0) { if (b[o + 3] > 0) continue; }               // the body is in front there
+        else if (cw > viewDepth(seen) + STEEP_TOL) continue;       // deeper than the cloth seen there
+        if (cutHidden(f) || (S.preview && !CutCore.isKept(S.layers.cut.labels[f], S.fig.unpainted))) continue;
+        sampleMark[f] = sampleNo;
+        if (n >= footprint.length) { const nf = new Uint32Array(footprint.length * 2); nf.set(footprint); footprint = nf; }
+        footprint[n++] = f;
+      }
+    }
+    return n;
+  }
+  const viewProj = new THREE.Matrix4();
+  function viewDepth(f) { const e = viewProj.elements, c = S.centroids, x = c[f * 3], y = c[f * 3 + 1], z = c[f * 3 + 2]; return e[3] * x + e[7] * y + e[11] * z + e[15]; }
+  // a brush drag from one sample to the next, without gaps
+  let lastPt = null;
+  function brushTo(px, py) {
+    if (!lastPt) { const r = brushSample(px, py); lastPt = { x: px, y: py, r: r || 6 }; return; }
+    const dx = px - lastPt.x, dy = py - lastPt.y, d = Math.hypot(dx, dy);
+    const step = Math.max(1, lastPt.r * 0.5), n = Math.max(1, Math.ceil(d / step));
+    let r = lastPt.r;
+    for (let i = 1; i <= n; i++) { const rr = brushSample(lastPt.x + dx * i / n, lastPt.y + dy * i / n); if (rr) r = rr; }
+    lastPt = { x: px, y: py, r };
+  }
+  function fillAt(px, py) {
+    const f = faceAt(px, py); if (f < 0) return;
+    if (S.locked[S.labels[f]]) { toast("That piece is locked. Unlock it in the label list to change it."); return; }
+    if (!S.adj) S.adj = CutCore.buildAdjacency(S.idx, S.nFaces, S.nVerts);
+    let faces;
+    if (S.pieceFill && S.pieces) {
+      // the whole found piece under the click (faces of the same old label, not locked)
+      const pc = S.pieces[f], old = S.labels[f], out = [];
+      if (old !== S.current && !S.locked[old]) for (let g = 0; g < S.nFaces; g++) if (S.pieces[g] === pc && S.labels[g] === old) out.push(g);
+      faces = Uint32Array.from(out);
+    } else if (S.edgeFill) {
+      ensureFaceLooks();
+      const L = CutCore.edgeLimits(S.edgeSens);
+      faces = CutCore.edgeFill(S.labels, S.adj, f, S.current, S.locked, S.faceLab, S.faceNrm, L.tLocal, L.tGlobal, L.cosFold, S.walls);
+    } else faces = CutCore.floodFill(S.labels, S.adj, f, S.current, S.locked, S.walls);
+    beginStroke(S.current); applyFaces(faces, faces.length);
+    const n = endStroke();
+    if (n > 0.6 * S.nFaces) toast("That filled a very large area. Undo if an outline was open.");
+  }
+  let lassoCanvas = null;
+  function lassoApply(ptsBuf) {
+    if (ptsBuf.length < 3) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of ptsBuf) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0)); x1 = Math.min(pick.w - 1, Math.ceil(x1)); y1 = Math.min(pick.h - 1, Math.ceil(y1));
+    const w = x1 - x0 + 1, h = y1 - y0 + 1; if (w < 2 || h < 2) return;
+    if (!lassoCanvas) lassoCanvas = document.createElement("canvas");
+    lassoCanvas.width = w; lassoCanvas.height = h;
+    const g = lassoCanvas.getContext("2d", { willReadFrequently: true });
+    g.clearRect(0, 0, w, h); g.fillStyle = "#fff"; g.beginPath();
+    ptsBuf.forEach((p, i) => i ? g.lineTo(p.x - x0, p.y - y0) : g.moveTo(p.x - x0, p.y - y0));
+    g.closePath(); g.fill();
+    const mask = g.getImageData(0, 0, w, h).data;
+    if (!sampleMark || sampleMark.length !== S.nFaces) sampleMark = new Uint32Array(S.nFaces);
+    sampleNo++;
+    const out = [];
+    if (S.through) {
+      const v = new THREE.Vector3();
+      for (let f = 0; f < S.nFaces; f++) {
+        if (cutHidden(f) || (S.preview && !CutCore.isKept(S.layers.cut.labels[f], S.fig.unpainted))) continue;
+        v.set(S.centroids[f * 3], S.centroids[f * 3 + 1], S.centroids[f * 3 + 2]).project(camera);
+        if (v.z > 1) continue;
+        const sx = Math.round((v.x + 1) / 2 * pick.w) - x0, sy = Math.round((1 - v.y) / 2 * pick.h) - y0;
+        if (sx < 0 || sy < 0 || sx >= w || sy >= h) continue;
+        if (mask[(sy * w + sx) * 4 + 3] > 127) out.push(f);
+      }
+    } else {
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        if (mask[(y * w + x) * 4 + 3] <= 127) continue;
+        const id = faceAt(x + x0, y + y0);
+        if (id >= 0 && sampleMark[id] !== sampleNo) { sampleMark[id] = sampleNo; out.push(id); }
+      }
+    }
+    beginStroke(S.current); applyFaces(out, out.length); endStroke();
+  }
+
+  // Each face's own colour (four texture samples, then a light blend with its neighbours to calm the weave) and its
+  // facing direction, worked out once per figure the first time the edge-stopping fill is used.
+  function ensureFaceLooks() {
+    if (S.faceLab) return;
+    const n = S.nFaces, lab = new Float32Array(n * 3), nrm = new Float32Array(n * 3);
+    const img = S.clothTex && S.clothTex.image;
+    if (img) {
+      if (!S.texPixels) texColourAt(0);
+      const T = S.texPixels, uv = S.clothGeo.attributes.uv.array;
+      const px = (u, v) => { const x = Math.min(T.w - 1, Math.max(0, Math.floor((u - Math.floor(u)) * T.w))), y = Math.min(T.h - 1, Math.max(0, Math.floor((v - Math.floor(v)) * T.h))); return (y * T.w + x) * 4; };
+      for (let f = 0; f < n; f++) {
+        const o = f * 6, cu = (uv[o] + uv[o + 2] + uv[o + 4]) / 3, cv = (uv[o + 1] + uv[o + 3] + uv[o + 5]) / 3;
+        let r = 0, g = 0, b = 0;
+        for (let k = -1; k < 3; k++) {
+          const u = k < 0 ? cu : (uv[o + k * 2] + cu) / 2, v = k < 0 ? cv : (uv[o + k * 2 + 1] + cv) / 2, q = px(u, v);
+          r += T.d[q]; g += T.d[q + 1]; b += T.d[q + 2];
+        }
+        CutCore.rgbToLab(r / 4, g / 4, b / 4, lab, f * 3);
+      }
+      const sm = new Float32Array(n * 3);
+      for (let f = 0; f < n; f++) {
+        let L = lab[f * 3] * 2, A = lab[f * 3 + 1] * 2, B = lab[f * 3 + 2] * 2, w = 2;
+        for (let k = S.adj.start[f]; k < S.adj.start[f + 1]; k++) { const g = S.adj.list[k]; L += lab[g * 3]; A += lab[g * 3 + 1]; B += lab[g * 3 + 2]; w++; }
+        sm[f * 3] = L / w; sm[f * 3 + 1] = A / w; sm[f * 3 + 2] = B / w;
+      }
+      lab.set(sm);
+    }
+    const P = S.clothGeo.attributes.position.array;
+    for (let f = 0; f < n; f++) {
+      const o = f * 9, ax = P[o + 3] - P[o], ay = P[o + 4] - P[o + 1], az = P[o + 5] - P[o + 2], bx = P[o + 6] - P[o], by = P[o + 7] - P[o + 1], bz = P[o + 8] - P[o + 2];
+      const x = ay * bz - az * by, y = az * bx - ax * bz, z = ax * by - ay * bx, l = Math.hypot(x, y, z) || 1;
+      nrm[f * 3] = x / l; nrm[f * 3 + 1] = y / l; nrm[f * 3 + 2] = z / l;
+    }
+    S.faceLab = lab; S.faceNrm = nrm;
+  }
+  // colour of the model's own picture at a face's texture centre
+  function texColourAt(f) {
+    const img = S.clothTex && S.clothTex.image; if (!img) return null;
+    if (!S.texPixels) {
+      const cv = document.createElement("canvas"); cv.width = img.width; cv.height = img.height;
+      const g = cv.getContext("2d", { willReadFrequently: true }); g.drawImage(img, 0, 0);
+      S.texPixels = { w: cv.width, h: cv.height, d: g.getImageData(0, 0, cv.width, cv.height).data };
+    }
+    const uv = S.clothGeo.attributes.uv.array, o = f * 6;
+    const u = (uv[o] + uv[o + 2] + uv[o + 4]) / 3, v = (uv[o + 1] + uv[o + 3] + uv[o + 5]) / 3;   // v = 0 is the top row
+    const T = S.texPixels, x = Math.min(T.w - 1, Math.max(0, Math.floor((u - Math.floor(u)) * T.w))), y = Math.min(T.h - 1, Math.max(0, Math.floor((v - Math.floor(v)) * T.h)));
+    const k = (y * T.w + x) * 4;
+    return "#" + [T.d[k], T.d[k + 1], T.d[k + 2]].map(c => c.toString(16).padStart(2, "0")).join("");
+  }
+  function dropperAt(px, py) {
+    ensurePick();
+    const f = faceAt(px, py); if (f < 0) return null;
+    const hex = texColourAt(f); if (!hex) return null;
+    if (S.layer !== "colour") useLayer("colour");
+    let ent = entryOf(S.layers.colour, S.current);
+    if (!ent) ent = addColourSwatch(hex); else ent.color = hex;
+    S.dirty = true; buildLabelsUI(); refreshAllColours(); updateSaveStatus(); scheduleDraft();
+    toast("Swatch set to " + hex + ". Paint where this colour should go.", 4000);
+    return hex;
+  }
+  function addColourSwatch(hex) {
+    const L = S.layers.colour, used = new Set(L.list.map(l => l.id));
+    let id = 1; while (used.has(id) && id <= 15) id++;
+    if (id > 15) return null;
+    const ent = { id, name: "Colour " + id, color: hex || "#c8641e" };
+    L.list.push(ent); L.current = id; S.current = id;
+    return ent;
+  }
+  function fillHoles() {
+    if (!S.adj) S.adj = CutCore.buildAdjacency(S.idx, S.nFaces, S.nVerts);
+    const r = CutCore.fillHoles(S.labels, S.adj, 300, S.locked);
+    const n = applyBatch(r.faces, r.labels);
+    toast(n ? "Filled " + n.toLocaleString("en-US") + " faces in " + r.islands + " small holes." : "No small holes found.", 4000);
+    return n;
+  }
+  function smoothEdges() {
+    if (!S.adj) S.adj = CutCore.buildAdjacency(S.idx, S.nFaces, S.nVerts);
+    const r = CutCore.smoothEdges(S.labels, S.adj, S.locked, 2);
+    const n = applyBatch(r.faces, r.labels);
+    toast(n ? "Evened out " + n.toLocaleString("en-US") + " faces along the outlines. Undo if it took too much." : "The outlines are already even.", 4000);
+    return n;
+  }
+  $("fillHoles").addEventListener("click", fillHoles);
+  // wipe every mark in the current mode except locked labels, as one undo step
+  function clearAll() {
+    const L = S.layers[S.layer], faces = [];
+    for (let f = 0; f < S.nFaces; f++) { const l = L.labels[f]; if (l !== 0 && !S.locked[l]) faces.push(f); }
+    const n = applyBatch(faces, new Uint8Array(faces.length));
+    toast(n ? "Cleared " + n.toLocaleString("en-US") + " faces. Undo brings them back." : "Nothing to clear.", 5000);
+    return n;
+  }
+  $("clearAll").addEventListener("click", clearAll);
+
+  /* ---------- walls ---------- */
+  // A wall is a straight line drawn on the screen, cut straight through the model like a knife (front and back):
+  // every face whose corners lie on both sides of the line, within its length, becomes a wall face. Fill paints wall
+  // faces but does not spread past them, so a few walls close off a garment whose colour runs into the next one.
+  // Walls are helpers only: they are not saved and do not change the cut.
+  function addWall(p0, p1) {
+    const dx = p1.x - p0.x, dy = p1.y - p0.y, len2 = dx * dx + dy * dy;
+    if (len2 < 16) return 0;                                  // a click, not a line
+    const len = Math.sqrt(len2), nx = -dy / len, ny = dx / len;
+    camera.updateMatrixWorld();
+    const m = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse).elements;
+    const P = S.clothGeo.attributes.position.array, W = pick.w, H = pick.h, faces = [];
+    const sx = new Float32Array(3), sy = new Float32Array(3);
+    for (let f = 0; f < S.nFaces; f++) {
+      let ok = true;
+      for (let k = 0; k < 3; k++) {
+        const o = f * 9 + k * 3, x = P[o], y = P[o + 1], z = P[o + 2];
+        const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+        if (w <= 1e-6) { ok = false; break; }
+        sx[k] = ((m[0] * x + m[4] * y + m[8] * z + m[12]) / w + 1) / 2 * W;
+        sy[k] = (1 - (m[1] * x + m[5] * y + m[9] * z + m[13]) / w) / 2 * H;
+      }
+      if (!ok) continue;
+      let neg = false, pos = false;
+      for (let k = 0; k < 3; k++) { if (nx * (sx[k] - p0.x) + ny * (sy[k] - p0.y) < 0) neg = true; else pos = true; }
+      if (!(neg && pos)) continue;
+      const t = (dx * ((sx[0] + sx[1] + sx[2]) / 3 - p0.x) + dy * ((sy[0] + sy[1] + sy[2]) / 3 - p0.y)) / len2;
+      if (t < -2 / len || t > 1 + 2 / len) continue;
+      if (!S.walls[f]) faces.push(f);
+    }
+    for (const f of faces) S.walls[f] = 1;
+    S.wallList.push(Uint32Array.from(faces));
+    showWalls(faces); updateWallUI();
+    return faces.length;
+  }
+  function showWalls(faces) {
+    const d = S.labTex.image.data;
+    for (const f of faces) d[f * 4 + 2] = S.walls[f] ? 255 : 0;
+    S.labTex.needsUpdate = true; requestRender();
+  }
+  function undoWall() { const w = S.wallList.pop(); if (!w) return; for (const f of w) S.walls[f] = 0; showWalls(w); updateWallUI(); }
+  function clearWalls() { const all = []; S.wallList.forEach(w => { for (const f of w) { S.walls[f] = 0; all.push(f); } }); S.wallList = []; showWalls(all); updateWallUI(); }
+  function updateWallUI() {
+    const n = S.wallList.length;
+    $("undoWall").disabled = $("clearWalls").disabled = !n;
+    $("wallInfo").textContent = n ? n + " wall" + (n > 1 ? "s" : "") : "";
+  }
+  $("undoWall").addEventListener("click", undoWall);
+  $("clearWalls").addEventListener("click", clearWalls);
+  $("smoothEdges").addEventListener("click", smoothEdges);
+
+  /* ---------- preview ---------- */
+  // Preview only changes what the shader draws: faces whose piece would be cut away are skipped. Nothing is rebuilt,
+  // so painting with Preview on costs the same as without it.
+  function buildPreview() {
+    markUniforms.uPrev.value = S.preview ? 1 : 0; markUniforms.uUseHide.value = S.preview ? 0 : 1;
+    if (!S.preview) return;
+    const n = previewDrawnCount();
+    $("previewNote").textContent = n.toLocaleString("en-US") + " faces kept, " + (S.nFaces - n).toLocaleString("en-US") + " removed.";
+  }
+  // faces the preview draws, read from the same palette flags the shader uses
+  function previewDrawnCount() {
+    const pd = S.palTex.image.data, cnt = S.layers.cut.counts; let n = 0;
+    for (let l = 0; l < 256; l++) if (cnt[l] && !pd[(2 * 256 + l) * 4 + 1]) n += cnt[l];
+    return n;
+  }
+  function setPreview(on) {
+    S.preview = on; $("preview").checked = on;
+    document.body.classList.toggle("preview-on", on);
+    buildPreview();
+    if (!on) $("previewNote").textContent = "";
+    pick.dirty = true; renderPick(); requestRender();
+  }
+
+  /* ---------- pointer and touch ---------- */
+  const pointers = new Map();
+  let drag = null, spaceDown = false;
+  function bufXY(e) { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) * pick.w / r.width, y: (e.clientY - r.top) * pick.h / r.height, cx: e.clientX - r.left, cy: e.clientY - r.top }; }
+  function toolStart(e) {
+    ensurePick();
+    const p = bufXY(e);
+    if (S.tool === "clone") {
+      if (e.altKey || !S.clone.src) { setCloneSource(p.x, p.y); drag = { kind: "none" }; return; }
+      beginClone(p.x, p.y); lastPt = null; brushTo(p.x, p.y); updateCountsUI(); drag = { kind: "paint" }; return;
+    }
+    if (S.layer === "colour" && S.tool !== "eraser" && S.tool !== "dropper" && !entryOf(S.layers.colour, S.current)) {
+      toast("Add a colour first: use Pick colour on the model, or Add a colour.", 5000); drag = { kind: "none" }; return;
+    }
+    if (S.tool === "brush" || S.tool === "eraser") { beginStroke(S.tool === "eraser" ? 0 : S.current); lastPt = null; brushTo(p.x, p.y); updateCountsUI(); drag = { kind: "paint" }; }
+    else if (S.tool === "fill") { fillAt(p.x, p.y); drag = { kind: "none" }; }
+    else if (S.tool === "lasso") { drag = { kind: "lasso", pts: [p] }; $("lasso").hidden = false; drawLasso(drag.pts); }
+    else if (S.tool === "dropper") { dropperAt(p.x, p.y); drag = { kind: "none" }; }
+    else if (S.tool === "wall") { drag = { kind: "wall", pts: [p, p] }; $("lasso").hidden = false; drawLasso(drag.pts); }
+  }
+  function drawLasso(pts) {
+    const sx = canvas.clientWidth / (pick.w || 1);
+    $("lasso").querySelector("polyline").setAttribute("points", pts.map(p => (p.x * sx).toFixed(1) + "," + (p.y * sx).toFixed(1)).join(" "));
+  }
+  canvas.addEventListener("contextmenu", e => e.preventDefault());
+  canvas.addEventListener("pointerdown", e => {
+    if (!S.fig) return;
+    canvas.focus({ preventScroll: true });
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (e.pointerType === "touch") {
+      if (pointers.size === 2) { cancelStroke(); $("lasso").hidden = true; drag = { kind: "two" }; return; }
+      if (pointers.size > 2) return;
+      if (S.tool === "turn") { drag = { kind: "rotate" }; return; }
+      toolStart(e); return;
+    }
+    if (e.button === 1 || (e.button === 2 && e.shiftKey)) { drag = { kind: "pan" }; e.preventDefault(); return; }
+    if (e.button === 2 || (e.button === 0 && (spaceDown || S.tool === "turn"))) { drag = { kind: "rotate" }; return; }
+    if (e.button === 0) toolStart(e);
+  });
+  canvas.addEventListener("pointermove", e => {
+    const prev = pointers.get(e.pointerId);
+    const cur = { x: e.clientX, y: e.clientY };
+    if (drag && drag.kind === "two" && prev && pointers.size >= 2) {
+      const pts = [...pointers.values()], other = pts.find(p => p !== prev);
+      const m0 = { x: (prev.x + other.x) / 2, y: (prev.y + other.y) / 2 }, m1 = { x: (cur.x + other.x) / 2, y: (cur.y + other.y) / 2 };
+      const d0 = Math.hypot(prev.x - other.x, prev.y - other.y), d1 = Math.hypot(cur.x - other.x, cur.y - other.y);
+      const a0 = Math.atan2(prev.y - other.y, prev.x - other.x), a1 = Math.atan2(cur.y - other.y, cur.x - other.x);
+      let da = a1 - a0; if (da > Math.PI) da -= 2 * Math.PI; if (da < -Math.PI) da += 2 * Math.PI;
+      panBy(m1.x - m0.x, m1.y - m0.y);
+      if (d0 > 10 && d1 > 10) { const r = canvas.getBoundingClientRect(); zoomAt(m1.x - r.left, m1.y - r.top, d0 / d1); }
+      S.orbit.az -= da; cameraChanged();
+      pointers.set(e.pointerId, cur); return;
+    }
+    if (prev) pointers.set(e.pointerId, cur);
+    if (drag && prev) {
+      const dx = cur.x - prev.x, dy = cur.y - prev.y;
+      if (drag.kind === "rotate") rotateBy(dx, dy);
+      else if (drag.kind === "pan") panBy(dx, dy);
+      else if (drag.kind === "paint") { const p = bufXY(e); brushTo(p.x, p.y); updateCountsUI(); }
+      else if (drag.kind === "lasso") { drag.pts.push(bufXY(e)); drawLasso(drag.pts); }
+      else if (drag.kind === "wall") { drag.pts[1] = bufXY(e); drawLasso(drag.pts); }
+    }
+    showCursor(e);
+  });
+  function pointerEnd(e) {
+    pointers.delete(e.pointerId);
+    if (!drag) return;
+    if (drag.kind === "two") { if (pointers.size === 0) drag = null; return; }
+    if (drag.kind === "paint") endStroke();
+    if (drag.kind === "lasso") { $("lasso").hidden = true; lassoApply(drag.pts); }
+    if (drag.kind === "wall") { $("lasso").hidden = true; addWall(drag.pts[0], drag.pts[1]); }
+    drag = null;
+  }
+  canvas.addEventListener("pointerup", pointerEnd);
+  canvas.addEventListener("pointercancel", e => { if (drag && drag.kind === "paint") cancelStroke(); pointers.delete(e.pointerId); drag = null; $("lasso").hidden = true; });
+  canvas.addEventListener("pointerleave", () => { $("cursor").hidden = true; });
+  canvas.addEventListener("wheel", e => {
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(Math.max(-1, Math.min(1, e.deltaY * (e.deltaMode ? 0.05 : 0.0015)))));
+  }, { passive: false });
+  function showCursor(e) {
+    const cur = $("cursor");
+    if (S.tool === "clone" && S.clone && S.clone.src) { const q = bufXY(e); if (S.clone.offset) placeCloneMark(q.x + S.clone.offset.x, q.y + S.clone.offset.y); }
+    if (e.pointerType === "touch" || !(S.tool === "brush" || S.tool === "eraser" || S.tool === "clone") || spaceDown || (drag && drag.kind !== "paint") || pick.dirty) { cur.hidden = true; return; }
+    const p = bufXY(e), f = faceAt(p.x, p.y);
+    if (f < 0) { cur.hidden = true; return; }
+    const d = 2 * brushRadiusPx(f) * canvas.clientWidth / pick.w;
+    cur.style.width = cur.style.height = d.toFixed(1) + "px";
+    cur.style.left = p.cx + "px"; cur.style.top = p.cy + "px";
+    cur.hidden = false;
+  }
+
+  /* ---------- keys ---------- */
+  document.addEventListener("keydown", e => {
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" && t.type !== "checkbox" && t.type !== "range" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+    const k = e.key;
+    if ((e.ctrlKey || e.metaKey) && (k === "z" || k === "Z")) { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+    if ((e.ctrlKey || e.metaKey) && (k === "y" || k === "Y")) { e.preventDefault(); redo(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (k === " ") { spaceDown = true; $("cursor").hidden = true; if (t === canvas || t === document.body) e.preventDefault(); return; }
+    if (/^[1-9]$/.test(k)) { const l = S.labelList[+k - 1]; if (l) { selectLabel(l.id); } return; }
+    if (MOVE_KEYS[e.code]) { held.add(MOVE_KEYS[e.code]); startMoving(); e.preventDefault(); return; }
+    if (k === "r" || k === "R") { setView("reset"); return; }
+    if ((k === "i" || k === "I") && S.layer === "colour") { setTool("dropper"); return; }
+    if ((k === "k" || k === "K") && S.layer === "colour") { setTool("clone"); return; }
+    const map = { b: "brush", f: "fill", l: "lasso", e: "eraser" };
+    if (map[k.toLowerCase()]) { setTool(map[k.toLowerCase()]); return; }
+    if (k === "p" || k === "P") { setPreview(!S.preview); return; }
+    if (k === "[" || k === "]") { setSize(k === "]" ? S.sizeCm * 1.25 : S.sizeCm / 1.25); return; }
+  });
+  // Held keys move the view: W A S D slide, arrows turn, + and - zoom toward the middle.
+  // keyed by the physical key, so a key let go with or without Shift always stops
+  const MOVE_KEYS = { KeyW: "w", KeyA: "a", KeyS: "s", KeyD: "d", ArrowLeft: "ArrowLeft", ArrowRight: "ArrowRight", ArrowUp: "ArrowUp", ArrowDown: "ArrowDown",
+    Equal: "+", NumpadAdd: "+", Minus: "-", NumpadSubtract: "-" };
+  const held = new Set(); let moving = false, lastMoveT = 0;
+  function startMoving() { if (moving) return; moving = true; lastMoveT = performance.now(); requestAnimationFrame(moveStep); }
+  function moveStep(t) {
+    if (!held.size) { moving = false; return; }
+    const dt = Math.min(0.05, (t - lastMoveT) / 1000); lastMoveT = t;
+    const px = 420 * dt, rot = 1.6 * dt;
+    let sx = 0, sy = 0;
+    if (held.has("a")) sx += px; if (held.has("d")) sx -= px; if (held.has("w")) sy += px; if (held.has("s")) sy -= px;
+    if (sx || sy) panBy(sx, sy);
+    if (held.has("ArrowLeft")) S.orbit.az += rot; if (held.has("ArrowRight")) S.orbit.az -= rot;
+    if (held.has("ArrowUp")) S.orbit.el = Math.min(1.5, S.orbit.el + rot); if (held.has("ArrowDown")) S.orbit.el = Math.max(-1.5, S.orbit.el - rot);
+    const zin = held.has("+"), zout = held.has("-");
+    if (zin || zout) S.orbit.dist = Math.max(0.15, Math.min(12, S.orbit.dist * Math.exp((zout ? 1 : -1) * 1.4 * dt)));
+    cameraChanged();
+    requestAnimationFrame(moveStep);
+  }
+  document.addEventListener("keyup", e => {
+    if (e.key === " ") spaceDown = false;
+    if (MOVE_KEYS[e.code]) held.delete(MOVE_KEYS[e.code]);
+  });
+  window.addEventListener("blur", () => { spaceDown = false; held.clear(); });
+
+  /* ---------- panel ---------- */
+  function setTool(t) {
+    if ((t === "dropper" || t === "clone") && S.layer !== "colour") t = "brush";
+    S.tool = t;
+    document.querySelectorAll(".tools button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tool === t)));
+    if (t !== "brush" && t !== "eraser" && t !== "clone") $("cursor").hidden = true;
+    if (t !== "clone") $("cloneMark").hidden = true;
+    else if (S.clone && S.clone.src) placeCloneMark(S.clone.src.x, S.clone.src.y);
+    else if (S.fig) toast("Clone: click where to copy the look from (Alt-click later to change it), then paint where it should go.", 5000);
+  }
+  document.querySelectorAll(".tools button").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
+  function setSize(v) {
+    S.sizeCm = Math.max(0.2, Math.min(8, Math.round(v * 10) / 10));
+    $("size").value = S.sizeCm; $("sizeVal").textContent = S.sizeCm.toFixed(1) + " cm";
+  }
+  $("size").addEventListener("input", e => setSize(+e.target.value));
+  $("through").addEventListener("change", e => { S.through = e.target.checked; });
+  S.edgeFill = true; S.edgeSens = 50; S.pieceFill = true;
+  $("pieceFill").addEventListener("change", e => { S.pieceFill = e.target.checked; });
+  $("showPieces").addEventListener("change", e => { markUniforms.uShowPieces.value = e.target.checked ? 1 : 0; requestRender(); });
+  $("edgeFill").addEventListener("change", e => { S.edgeFill = e.target.checked; });
+  $("edgeSens").addEventListener("input", e => { S.edgeSens = +e.target.value; $("edgeSensVal").textContent = e.target.value; });
+  document.querySelectorAll(".modes button").forEach(b => b.addEventListener("click", () => useLayer(b.dataset.mode)));
+  $("strength").addEventListener("input", e => { if (S.layer === "cut") strengthUniform.value = +e.target.value / 100; $("strengthVal").textContent = e.target.value + "%"; requestRender(); });
+  $("preview").addEventListener("change", e => setPreview(e.target.checked));
+  $("sharp").checked = sharp;
+  $("sharp").addEventListener("change", e => {
+    sharp = e.target.checked; try { localStorage.setItem("cutpage:sharp", sharp ? "1" : "0"); } catch (err) {}
+    renderer.setPixelRatio(pixelRatio()); resize();
+  });
+  document.querySelectorAll(".views button").forEach(b => b.addEventListener("click", () => setView(b.dataset.view)));
+  $("undo").addEventListener("click", undo); $("redo").addEventListener("click", redo);
+  $("figure").addEventListener("change", e => { const f = figureEntries().find(x => x.id === e.target.value); if (f) start(f); });
+  $("note").addEventListener("input", () => { S.dirty = true; updateSaveStatus(); scheduleDraft(); });
+
+  function selectLabel(id) {
+    S.current = id; S.layers[S.layer].current = id;
+    if (S.tool === "eraser" || S.tool === "turn") setTool("brush");
+    document.querySelectorAll(".lab").forEach(r => r.classList.toggle("current", +r.dataset.id === id));
+  }
+  function buildLabelsUI() {
+    const box = $("labels"); box.textContent = "";
+    const isCut = S.layer === "cut";
+    const rows = [{ id: 0, name: isCut ? "Unpainted" : "Own colour", color: null }, ...S.labelList];
+    $("labelsTitle").textContent = isCut ? "Labels" : "Colours";
+    $("addLabel").textContent = isCut ? "Add a label" : "Add a colour";
+    $("unpaintedNote").textContent = !isCut ? (S.labelList.length ? "Faces you leave alone keep the model's own colours. Pick colour takes a colour from the model." : "Add a colour or use Pick colour on the model, then paint where it should go.")
+      : S.fig.unpainted === "remove" ? "Cloth you leave unpainted will be removed." : "Cloth you leave unpainted will be kept.";
+    rows.forEach(l => {
+      const row = document.createElement("div");
+      row.className = "lab" + (l.id === S.current ? " current" : ""); row.dataset.id = l.id;
+      const dot = document.createElement("span"); dot.className = "dot";
+      dot.style.background = l.color || "transparent";
+      if (l.id !== 0 && l.id !== REMOVE) {
+        const ci = document.createElement("input"); ci.type = "color"; ci.value = l.color; ci.id = "lab-colour-" + l.id; ci.setAttribute("aria-label", "Colour for " + l.name);
+        ci.addEventListener("input", () => { l.color = ci.value; dot.style.background = ci.value; refreshAllColours(); S.dirty = true; updateSaveStatus(); scheduleDraft(); });
+        ci.addEventListener("click", ev => ev.stopPropagation());
+        dot.appendChild(ci);
+      }
+      if (l.id === 0) dot.style.borderStyle = "dashed";
+      const name = document.createElement("input"); name.className = "name"; name.value = l.name; name.id = "lab-name-" + l.id; name.setAttribute("aria-label", "Label name");
+      if (l.id === 0 || l.id === REMOVE) { name.readOnly = true; name.tabIndex = -1; }
+      else name.addEventListener("change", () => { l.name = name.value.trim() || l.name; name.value = l.name; S.dirty = true; updateSaveStatus(); scheduleDraft(); });
+      const count = document.createElement("span"); count.className = "count"; count.dataset.count = l.id;
+      if (!isCut) {
+        row.append(dot, name, count, document.createElement("span"));
+        if (l.id !== 0) {
+          const lock = document.createElement("button"); lock.id = "col-lock-" + l.id;
+          const setLock = () => { lock.textContent = S.locked[l.id] ? "Locked" : "Lock"; lock.setAttribute("aria-pressed", String(!!S.locked[l.id])); };
+          setLock(); lock.addEventListener("click", ev => { ev.stopPropagation(); S.locked[l.id] = S.locked[l.id] ? 0 : 1; setLock(); });
+          row.append(lock); row.addEventListener("click", () => selectLabel(l.id));
+        } else { row.append(document.createElement("span")); row.style.cursor = "default"; }
+        box.appendChild(row); return;
+      }
+      const eye = document.createElement("button"); eye.id = "lab-eye-" + l.id;
+      const setEye = () => { eye.textContent = S.hidden[l.id] ? "Show" : "Hide"; eye.setAttribute("aria-pressed", String(!!S.hidden[l.id])); eye.title = S.hidden[l.id] ? "Show this label's cloth" : "Hide this label's cloth so you can paint what is under it"; };
+      setEye();
+      eye.addEventListener("click", ev => { ev.stopPropagation(); S.hidden[l.id] = !S.hidden[l.id]; setEye(); refreshAllColours(); pick.dirty = true; renderPick(); });
+      row.append(dot, name, count, eye);
+      if (l.id !== 0) {
+        const lock = document.createElement("button"); lock.id = "lab-lock-" + l.id;
+        const setLock = () => { lock.textContent = S.locked[l.id] ? "Locked" : "Lock"; lock.setAttribute("aria-pressed", String(!!S.locked[l.id])); lock.title = "A locked label is never painted over"; };
+        setLock();
+        lock.addEventListener("click", ev => { ev.stopPropagation(); S.locked[l.id] = S.locked[l.id] ? 0 : 1; setLock(); });
+        row.append(lock);
+        row.addEventListener("click", () => selectLabel(l.id));
+        const n = S.labelList.indexOf(l) + 1;
+        if (n <= 9) row.title = "Key " + n;
+      } else { row.append(document.createElement("span")); row.style.cursor = "default"; }
+      box.appendChild(row);
+    });
+    $("addLabel").disabled = isCut ? S.labelList.filter(l => l.id !== REMOVE).length >= MAX_LABELS : S.labelList.length >= 15;
+    updateCountsUI();
+  }
+  $("addLabel").addEventListener("click", () => {
+    if (S.layer === "colour") {
+      const ent = addColourSwatch(); if (!ent) return;
+      S.dirty = true; buildLabelsUI(); updateSaveStatus(); scheduleDraft(); return;
+    }
+    const used = new Set(S.labelList.map(l => l.id));
+    let id = 1; while (used.has(id) && id <= MAX_LABELS) id++;
+    if (id > MAX_LABELS) return;
+    const colour = NEW_COLOURS[(S.labelList.length) % NEW_COLOURS.length];
+    const at = S.labelList.findIndex(l => l.id === REMOVE);
+    S.labelList.splice(at < 0 ? S.labelList.length : at, 0, { id, name: "Piece " + id, color: colour });
+    S.current = id; S.dirty = true; buildLabelsUI(); updateSaveStatus(); scheduleDraft();
+    const inp = $("lab-name-" + id); if (inp) { inp.focus(); inp.select(); }
+  });
+  function updateCountsUI() {
+    document.querySelectorAll("[data-count]").forEach(el => { el.textContent = S.counts[+el.dataset.count].toLocaleString("en-US"); });
+  }
+  function updateUndoUI() {
+    $("undo").disabled = !S.undo.length; $("redo").disabled = !S.redo.length;
+    $("stepInfo").textContent = S.undo.length ? S.undo.length + " step" + (S.undo.length > 1 ? "s" : "") + " back" : "";
+  }
+  function buildExtrasUI() {
+    const box = $("extras"); box.textContent = "";
+    $("extrasBox").hidden = !S.ctx.length;
+    if (!S.ctx.length) return;
+    S.ctx.forEach((c, i) => {
+      const lab = document.createElement("label"); lab.className = "switch";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.id = "extra-" + i; cb.checked = c.mesh.visible;
+      cb.addEventListener("change", () => { c.mesh.visible = c.pick.visible = cb.checked; requestRender(); pick.dirty = true; renderPick(); });
+      lab.append(cb, document.createTextNode(" " + c.name));
+      box.appendChild(lab);
+    });
+  }
+  let toastTimer = 0;
+  function toast(msg, ms) {
+    const t = $("toast"); t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms || 7000);
+  }
+  function fmtTime(d) { return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+  function updateSaveStatus(text, warn) {
+    const el = $("saveStatus");
+    el.classList.toggle("warn", !!warn);
+    if (text) { el.textContent = text; return; }
+    if (S.saving) el.textContent = "Saving…";
+    else if (S.dirty) el.textContent = "Changes not saved";
+    else if (S.savedAt) el.textContent = "Saved " + fmtTime(new Date(S.savedAt));
+    else el.textContent = "Not saved yet";
+  }
+  function setHelp() {
+    const touch = matchMedia("(pointer: coarse)").matches;
+    $("help").textContent = touch
+      ? "One finger paints. Two fingers slide, pinch to zoom, twist to turn. The Turn tool makes one finger turn."
+      : "Left drag paints · Right drag turns · Wheel zooms · Middle drag slides · W A S D slide · Arrows turn · + − zoom · R resets the view";
+  }
+  setHelp();
+
+  /* ---------- saving ---------- */
+  function withTimeout(p, ms) { return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej({ code: "timeout", message: "No answer in time" }), ms))]); }
+  function draftKey() { return "cutpage:draft:" + S.figId + ":" + S.fig.cloth.meshId; }
+  let draftTimer = 0;
+  function scheduleDraft() { clearTimeout(draftTimer); draftTimer = setTimeout(writeDraft, 2000); }
+  function writeDraft() {
+    if (!S.fig) return;
+    try {
+      const cut = S.layers.cut, col = S.layers.colour;
+      localStorage.setItem(draftKey(), JSON.stringify({ t: Date.now(), marks: CutCore.bytesToB64(cut.labels), labels: cut.list, note: $("note").value,
+        colourMarks: CutCore.bytesToB64(col.labels), swatches: col.list, clones: clonesB64() }));
+    } catch (e) { /* storage unavailable: drafts are a convenience only */ }
+  }
+  function readDraft() { try { const s = localStorage.getItem(draftKey()); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+  function clearDraft() { try { localStorage.removeItem(draftKey()); } catch (e) {} }
+  function setMarks(u8, labelList, note, layerName) {
+    const L = S.layers[layerName || "cut"];
+    L.labels.set(u8);
+    if (labelList) { L.list.length = 0; labelList.forEach(l => L.list.push({ id: l.id, name: l.name, color: l.color })); }
+    if (L.name === "cut" && !L.list.some(l => l.id === REMOVE)) L.list.push({ id: REMOVE, name: "Remove", color: "#c92a2a" });
+    if (!L.list.some(l => l.id === L.current)) L.current = L.list.length ? L.list[0].id : 1;
+    if (typeof note === "string") $("note").value = note;
+    S.undo = []; S.redo = [];
+    useLayer(S.layer, true);
+    recountAll(); refreshAllColours(); buildLabelsUI(); updateUndoUI();
+    if (S.preview) buildPreview();
+    pick.dirty = true; renderPick();
+  }
+
+  async function initDb() {
+    let db = null, user = null;
+    try {
+      if (window.claude && typeof window.claude.use === "function") {
+        [db, user] = await Promise.all([withTimeout(window.claude.use("db"), 10000).catch(() => null), withTimeout(window.claude.use("user"), 10000).catch(() => null)]);
+      }
+    } catch (e) { db = null; }
+    S.db = db; S.user = user; S.canSave = !!db;
+    if (db && user && typeof user.can === "function") {
+      try { const c = await user.can("data.write"); if (c === false) S.canSave = false; } catch (e) {}
+    }
+    $("save").disabled = !saveAllowed();
+    $("dbNote").textContent = !db
+      ? "Save keeps your work in this browser. File → Save paint to a file keeps a copy you can move to another computer."
+      : (!S.canSave ? "Saving is off for the listed figures: you can view this page but not save to it." : "");
+  }
+  let dbReady = null;
+  async function openSaved() {
+    await dbReady;
+    S.savedAt = null; S.dirty = false;
+    let saved = null;
+    if (S.fig.local || !S.db) { await openLocal(); await openLocalPieces(); }
+    else {
+      try {
+        const snap = await withTimeout(S.db.doc("cuts/" + S.figId).get(), 10000);
+        if (snap.exists) {
+          const m = snap.data();
+          if (m.meshId !== S.fig.cloth.meshId || m.nFaces !== S.nFaces) toast("The outfit file changed since the last save. Starting fresh.");
+          else {
+            const parts = [];
+            for (let i = 0; i < m.parts; i++) {
+              const ps = await withTimeout(S.db.doc("cuts/" + S.figId + "/parts/" + i).get(), 10000);
+              const pd = ps.exists ? ps.data() : null;
+              if (!pd || pd.stamp !== m.stamp) throw { code: "incomplete", message: "part " + i + " is missing or from another save" };
+              parts.push(pd.data);
+            }
+            const marks = CutCore.joinParts(parts);
+            if (marks.length !== S.nFaces) throw { code: "incomplete", message: "wrong length" };
+            saved = m; setMarks(marks, m.labels, m.note || "");
+            S.savedAt = m.savedAt;
+          }
+        }
+        const rc = await readLayerDoc("recolours");
+        if (rc) { setMarks(rc.marks, rc.doc.swatches || [], undefined, "colour"); S.hadColourSave = true; }
+        const cs = await readLayerDoc("clones", true);
+        if (cs) { applyClones(CutCore.bytesToB64(cs.marks)); S.hadCloneSave = true; }
+      } catch (e) {
+        if (e && e.code === "timeout") toast("The saved cut did not load in time. Starting from the outfit file.");
+        else if (e && e.code === "incomplete") toast("The last save was not complete. Starting from the outfit file.");
+        else toast("The saved cut could not be read. Starting from the outfit file.");
+      }
+    }
+    S.dirty = false; updateSaveStatus(); $("save").disabled = !saveAllowed();
+    $("dbNote").textContent = S.fig.local ? "Your own model: Save keeps your work in this browser. File → Save paint to a file keeps a copy you can move to another computer." : (S.db ? (S.canSave ? "" : $("dbNote").textContent) : $("dbNote").textContent);
+    useLayer("cut");
+    const d = readDraft(), savedMs = S.savedAt ? Date.parse(S.savedAt) : 0;
+    const btn = $("restore");
+    if (d && d.t > savedMs && d.marks) {
+      btn.hidden = false; btn.textContent = "Bring back unsaved work (" + fmtTime(new Date(d.t)) + ")";
+      btn.onclick = () => {
+        try {
+          const marks = CutCore.b64ToBytes(d.marks); if (marks.length === S.nFaces) { setMarks(marks, d.labels, d.note); S.dirty = true; }
+          if (d.colourMarks) { const cm = CutCore.b64ToBytes(d.colourMarks); if (cm.length === S.nFaces) setMarks(cm, d.swatches || [], undefined, "colour"); }
+          applyClones(d.clones || "");
+          updateSaveStatus();
+        } catch (e) {}
+        btn.hidden = true;
+      };
+    } else btn.hidden = true;
+  }
+  // read a saved layer (main document + parts with matching stamps); null when absent or for another outfit file
+  async function readLayerDoc(coll, pairs) {
+    const snap = await withTimeout(S.db.doc(coll + "/" + S.figId).get(), 10000);
+    if (!snap.exists) return null;
+    const m = snap.data();
+    if (m.meshId !== S.fig.cloth.meshId || m.nFaces !== S.nFaces) return null;
+    const parts = [];
+    for (let i = 0; i < m.parts; i++) {
+      const ps = await withTimeout(S.db.doc(coll + "/" + S.figId + "/parts/" + i).get(), 10000);
+      const pd = ps.exists ? ps.data() : null;
+      if (!pd || pd.stamp !== m.stamp) return null;
+      parts.push(pd.data);
+    }
+    const marks = CutCore.joinParts(parts);
+    return marks.length === (pairs ? m.count * 8 : S.nFaces) ? { doc: m, marks } : null;
+  }
+  async function writeLayerDoc(coll, marks, extra) {
+    const stamp = CutCore.randomStamp(), parts = CutCore.splitParts(marks), figId = S.figId;
+    for (let i = 0; i < parts.length; i++) await S.db.doc(coll + "/" + figId + "/parts/" + i).set({ stamp, data: parts[i] });
+    await S.db.doc(coll + "/" + figId).set(Object.assign({ version: 1, figure: figId, meshId: S.fig.cloth.meshId, nFaces: S.nFaces, parts: parts.length, stamp }, extra));
+  }
+  // cloned faces with their source faces, as [face, source] pairs (see clonePairs)
+  async function saveClonesDoc(savedAt) {
+    const p = clonePairs();
+    if (!p.length && !S.hadCloneSave) return;
+    await writeLayerDoc("clones", new Uint8Array(p.buffer), { savedAt, count: p.length / 2, format: "face,source pairs, 32-bit little-endian" });
+    S.hadCloneSave = true;
+  }
+  function saveAllowed() { return !!S.fig && (S.fig.local || !S.db || S.canSave); }
+  async function save() {
+    if (S.saving || !S.fig) return;
+    if (S.fig.local || !S.db) return saveLocal();
+    if (!S.canSave) return;
+    S.saving = true; $("save").disabled = true; updateSaveStatus();
+    const cut = S.layers.cut, col = S.layers.colour;
+    const marks = cut.labels.slice(), stamp = CutCore.randomStamp(), parts = CutCore.splitParts(marks), figId = S.figId;
+    const colMarks = col.labels.slice(), swatches = col.list.map(l => ({ id: l.id, name: l.name, color: l.color }));
+    try {
+      for (let i = 0; i < parts.length; i++) await S.db.doc("cuts/" + figId + "/parts/" + i).set({ stamp, data: parts[i] });
+      const savedAt = new Date().toISOString();
+      await S.db.doc("cuts/" + figId).set({
+        version: 1, figure: figId, meshId: S.fig.cloth.meshId, nFaces: S.nFaces,
+        labels: S.labelList.map(l => ({ id: l.id, name: l.name, color: l.color })), unpainted: S.fig.unpainted,
+        parts: parts.length, stamp, note: $("note").value, savedAt,
+      });
+      if (swatches.length || S.hadColourSave || colMarks.some(v => v)) {
+        await writeLayerDoc("recolours", colMarks, { swatches, savedAt });
+        S.hadColourSave = true;
+      }
+      await saveClonesDoc(savedAt);
+      S.savedAt = savedAt; S.dirty = false; S.saving = false; clearDraft(); $("restore").hidden = true;
+      updateSaveStatus();
+    } catch (e) {
+      S.saving = false;
+      const why = e && e.code === "quota_exceeded" ? "the page's storage is full" : e && e.code === "invalid_argument" ? "you may not have permission to save here" : "the connection failed";
+      updateSaveStatus("Not saved: " + why + ". Your work is kept in this browser; try Save again.", true);
+      writeDraft();
+    }
+    $("save").disabled = !saveAllowed();
+  }
+  $("save").addEventListener("click", save);
+
+
+  /* ---------- loading screen, start screen ---------- */
+  function showLoading(text) { $("loading").hidden = false; $("loading").textContent = text; $("empty").hidden = true; }
+  function hideLoading() { $("loading").hidden = true; }
+  function showEmpty() { $("loading").hidden = true; $("empty").hidden = false; document.body.classList.toggle("nomodel", !S.fig); }
+
+  /* ---------- your own models ---------- */
+  S.localModels = [];
+  function figureEntries() { return S.figures.concat(S.localModels); }
+  function addModelOption(entry) {
+    const sel = $("figure");
+    let grp = sel.querySelector("optgroup[data-own]");
+    if (!grp) { grp = document.createElement("optgroup"); grp.label = "Your models"; grp.dataset.own = "1"; sel.appendChild(grp); }
+    const o = document.createElement("option"); o.value = entry.id; o.textContent = entry.name; grp.appendChild(o);
+    sel.value = entry.id; sel.hidden = false;
+  }
+  async function openModelFiles(files) {
+    files = [...files];
+    const piecesFiles = files.filter(f => /\.pieces\.json$/i.test(f.name));
+    const paint = files.filter(f => /\.json$/i.test(f.name) && !/\.pieces\.json$/i.test(f.name));
+    const rest = files.filter(f => !/\.json$/i.test(f.name));
+    if (rest.some(f => ModelIO.MODEL_EXT.test(f.name))) {
+      showLoading("Opening " + rest.find(f => ModelIO.MODEL_EXT.test(f.name)).name + "…");
+      let m;
+      try { m = await ModelIO.open(rest); }
+      catch (e) { if (S.fig) hideLoading(); else showEmpty(); toast((e && e.message) || "That model could not be opened."); return false; }
+      const old = S.localModels.findIndex(x => x.id === m.fig.id);
+      const entry = { id: m.fig.id, name: m.fig.name, local: true, model: m };
+      keepModel(entry, rest);
+      if (old >= 0) { S.localModels[old] = entry; $("figure").value = entry.id; } else { S.localModels.push(entry); addModelOption(entry); }
+      await start(entry);
+      if (m.fig.source.scale !== 1) toast("This model was scaled to person size so the brush sizes make sense. Exports go back to its own size.", 6000);
+    } else if (rest.length && !paint.length && !piecesFiles.length) { toast("Drop a .glb, .gltf, .obj, .fbx, .stl or .ply model (with its textures if they are separate files). From .usdz or .blend, export a .glb first."); return false; }
+    if (paint.length) await openPaintFile(paint[0]);
+    if (piecesFiles.length) await openPiecesFile(piecesFiles[0]);
+    return true;
+  }
+  $("openModel").addEventListener("click", () => $("modelInput").click());
+  $("emptyOpen").addEventListener("click", () => $("modelInput").click());
+  $("modelInput").addEventListener("change", e => { const f = e.target.files; if (f && f.length) openModelFiles(f); e.target.value = ""; });
+  // drag and drop anywhere on the page
+  let dragDepth = 0;
+  const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files");
+  window.addEventListener("dragenter", e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; $("dropzone").hidden = false; });
+  window.addEventListener("dragover", e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
+  window.addEventListener("dragleave", e => { if (!hasFiles(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $("dropzone").hidden = true; });
+  window.addEventListener("drop", e => {
+    if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; $("dropzone").hidden = true;
+    if (e.dataTransfer.files && e.dataTransfer.files.length) openModelFiles(e.dataTransfer.files);
+  });
+
+  /* ---------- paint files and exports ---------- */
+  function paintData() {
+    const cut = S.layers.cut, col = S.layers.colour;
+    return {
+      format: "paint-to-cut", version: 1, model: S.fig.name, meshId: S.fig.cloth.meshId, nFaces: S.nFaces,
+      labels: S.layers.cut.list.map(l => ({ id: l.id, name: l.name, color: l.color })), unpainted: S.fig.unpainted,
+      marks: CutCore.bytesToB64(cut.labels),
+      swatches: col.list.map(l => ({ id: l.id, name: l.name, color: l.color })), colourMarks: CutCore.bytesToB64(col.labels),
+      // Clone tool: colour mark 16 on a face means its look is copied from another face; these are the
+      // [face, source face] pairs, 32-bit little-endian, base64
+      clones: clonesB64(),
+      note: $("note").value, savedAt: new Date().toISOString(),
+    };
+  }
+  function applyPaintData(d, quiet) {
+    if (!d || d.format !== "paint-to-cut" || typeof d.marks !== "string") throw new Error("That is not a paint file from this page.");
+    if (d.nFaces !== S.nFaces) throw new Error("That paint file is for a model with " + d.nFaces.toLocaleString("en-US") + " faces; this one has " + S.nFaces.toLocaleString("en-US") + ".");
+    const marks = CutCore.b64ToBytes(d.marks); if (marks.length !== S.nFaces) throw new Error("That paint file is damaged.");
+    setMarks(marks, d.labels || [], d.note || "");
+    if (d.colourMarks) { const cm = CutCore.b64ToBytes(d.colourMarks); if (cm.length === S.nFaces) setMarks(cm, d.swatches || [], undefined, "colour"); }
+    applyClones(d.clones || "");
+    useLayer("cut");
+    if (!quiet && d.meshId !== S.fig.cloth.meshId) toast("The paint file's model has the same number of faces but was made from a different file. Check it looks right.", 7000);
+  }
+  async function openPaintFile(file) {
+    if (!S.fig) { toast("Open a model first, then its paint file."); return; }
+    try { applyPaintData(JSON.parse(await file.text())); S.dirty = true; updateSaveStatus(); scheduleDraft(); toast("Paint opened from " + file.name + ".", 4000); }
+    catch (e) { toast((e && e.message) || "That paint file could not be read."); }
+  }
+  $("paintInput").addEventListener("change", e => { const f = e.target.files && e.target.files[0]; if (f) openPaintFile(f); e.target.value = ""; });
+  const safeName = s => (s || "model").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_") || "model";
+  // in a claude.ai page files go through the viewer's save prompt; on its own the browser downloads them
+  let downloadsNs;
+  async function offerFile(filename, blob) {
+    if (downloadsNs === undefined) {
+      downloadsNs = null;
+      try { if (window.claude && typeof window.claude.use === "function") downloadsNs = await withTimeout(window.claude.use("downloads"), 4000).catch(() => null); } catch (e) {}
+    }
+    if (downloadsNs) {
+      try { await downloadsNs.save({ filename, data: blob }); return true; }
+      catch (e) { if (e && e.code === "declined") return false; if (!(e && /unavailable|not_granted|capability/.test(e.code))) { toast("The file could not be saved (" + ((e && e.code) || "error") + ")."); return false; } }
+    }
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    return true;
+  }
+  async function savePaintFile() {
+    if (!S.fig) return;
+    const ok = await offerFile(safeName(S.fig.name) + ".paint.json", new Blob([JSON.stringify(paintData())], { type: "application/json" }));
+    if (ok) toast("Paint saved as a file. Open it again with File → Open a paint file.", 5000);
+  }
+  async function buildExportFiles() {
+    const P = S.clothGeo.attributes.position.array, U = S.clothGeo.attributes.uv ? S.clothGeo.attributes.uv.array : new Float32Array(S.nFaces * 6);
+    const common = { pos: P, uv: U, list: S.layers.cut.list, unpainted: S.fig.unpainted, isKept: CutCore.isKept, texture: S.clothTex, source: S.fig.source || null };
+      const all = await ModelIO.exportPieces(Object.assign({ labels: S.layers.cut.labels, name: S.fig.name }, common));
+      const files = [{ name: safeName(S.fig.name) + "_all_pieces.glb", data: new Uint8Array(await all.blob.arrayBuffer()) }];
+      // one file per piece as well
+      const kept = new Set(); for (let f = 0; f < S.nFaces; f++) { const l = S.layers.cut.labels[f]; if (CutCore.isKept(l, S.fig.unpainted)) kept.add(l); }
+      for (const l of kept) {
+        const one = new Uint8Array(S.nFaces); for (let f = 0; f < S.nFaces; f++) one[f] = S.layers.cut.labels[f] === l ? l : REMOVE;
+        const ent = S.layers.cut.list.find(e => e.id === l), nm = ent ? ent.name : "Unlabelled";
+        const r = await ModelIO.exportPieces(Object.assign({ labels: one, name: nm }, common));
+        files.push({ name: safeName(S.fig.name) + "_" + safeName(nm) + ".glb", data: new Uint8Array(await r.blob.arrayBuffer()) });
+      }
+      files.push({ name: safeName(S.fig.name) + ".paint.json", data: new TextEncoder().encode(JSON.stringify(paintData())) });
+      return { files, names: all.names };
+  }
+  async function exportPieces() {
+    if (!S.fig) return;
+    toast("Building the pieces…", 20000);
+    try {
+      const { files, names } = await buildExportFiles();
+      $("toast").hidden = true;
+      const ok = await offerFile(safeName(S.fig.name) + "_pieces.zip", CutCore.zipStore(files));
+      if (ok) toast("Exported " + names.join(", ") + ". The zip holds one .glb per piece, one with all of them, and your paint file.", 8000);
+    } catch (e) { toast((e && e.message) || "The export failed."); }
+  }
+  $("savePaintFile").addEventListener("click", () => { closeMenu(); savePaintFile(); });
+  $("openPaintFile").addEventListener("click", () => { closeMenu(); $("paintInput").click(); });
+  $("exportPieces").addEventListener("click", () => { closeMenu(); exportPieces(); });
+  $("forgetModel").addEventListener("click", forgetModel);
+  $("openPiecesFile").addEventListener("click", () => { closeMenu(); $("piecesInput").click(); });
+  $("piecesInput").addEventListener("change", e => { const f = e.target.files && e.target.files[0]; if (f) openPiecesFile(f); e.target.value = ""; });
+
+  /* ---------- found pieces for your own models ---------- */
+  // A pieces file (made by the piece finder) gives each face a piece number; Fill can then take a whole piece.
+  function usePieces(pieces) {
+    S.pieces = pieces;
+    const dd = S.labTex.image.data; for (let f = 0; f < S.nFaces; f++) dd[f * 4 + 3] = pieces ? pieces[f] % 251 + 1 : 0;
+    S.labTex.needsUpdate = true; requestRender();
+    $("piecesBox").hidden = !pieces; updateFinderUI();
+  }
+  function readPiecesData(d) {
+    if (!d || d.format !== "paint-to-cut-pieces" || typeof d.pieces !== "string") throw new Error("That is not a pieces file.");
+    if (d.nFaces !== S.nFaces) throw new Error("That pieces file is for a model with " + d.nFaces.toLocaleString("en-US") + " faces; this one has " + S.nFaces.toLocaleString("en-US") + ".");
+    const u8 = CutCore.b64ToBytes(d.pieces); if (u8.length !== S.nFaces * 4) throw new Error("That pieces file is damaged.");
+    return new Uint32Array(u8.buffer, u8.byteOffset, S.nFaces).slice();
+  }
+  async function openPiecesFile(file) {
+    if (!S.fig) { toast("Open a model first, then its pieces file."); return; }
+    try {
+      const d = JSON.parse(await file.text()), pieces = readPiecesData(d);
+      usePieces(pieces);
+      try { await LocalStore.set("pieces:" + S.fig.cloth.meshId, d); } catch (e) {}
+      let n = 0; { const seen = new Set(); for (let f = 0; f < S.nFaces; f++) seen.add(pieces[f]); n = seen.size; }
+      toast(n + " found pieces loaded. With Fill, one click takes a whole piece (Fill options).", 6000);
+    } catch (e) { toast((e && e.message) || "That pieces file could not be read."); }
+  }
+  async function openLocalPieces() {
+    if (S.pieces) return;
+    try { const d = await LocalStore.get("pieces:" + S.fig.cloth.meshId); if (d) usePieces(readPiecesData(d)); } catch (e) {}
+  }
+
+  /* ---------- your models kept in this browser ---------- */
+  // The model files themselves are kept (not only the paint), so a reload or a new visit lists them again.
+  async function keepModel(entry, files) {
+    try {
+      await LocalStore.set("model:" + entry.id, { name: entry.name, files: files.map(f => ({ name: f.name, blob: f })) });
+      const list = ((await LocalStore.get("recent")) || []).filter(r => r.id !== entry.id);
+      list.unshift({ id: entry.id, name: entry.name, at: new Date().toISOString(), bytes: files.reduce((a, f) => a + f.size, 0) });
+      await LocalStore.set("recent", list.slice(0, 20));
+    } catch (e) { toast("This browser would not keep a copy of the model (it may be out of room). Your paint still saves; open the model file again next time.", 7000); }
+  }
+  async function keptModelFiles(id) {
+    const d = await LocalStore.get("model:" + id);
+    if (!d || !d.files) throw new Error("This model is no longer kept in this browser. Open its file again.");
+    return d.files.map(f => new File([f.blob], f.name));
+  }
+  async function listKeptModels() {
+    let list = [];
+    try { list = (await LocalStore.get("recent")) || []; } catch (e) { list = []; }
+    for (const r of list.slice().reverse()) {
+      if (S.localModels.some(x => x.id === r.id)) continue;
+      const entry = { id: r.id, name: r.name, local: true, model: null, kept: true };
+      S.localModels.push(entry); addModelOption(entry);
+    }
+    return list;
+  }
+  async function forgetModel() {
+    closeMenu();
+    if (!S.fig || !S.fig.local) { toast("Only your own models can be removed from this browser."); return; }
+    const id = S.fig.id, mesh = S.fig.cloth.meshId;
+    try {
+      await LocalStore.del("model:" + id); await LocalStore.del("save:" + mesh); await LocalStore.del("pieces:" + mesh);
+      await LocalStore.set("recent", ((await LocalStore.get("recent")) || []).filter(r => r.id !== id));
+    } catch (e) {}
+    S.localModels = S.localModels.filter(x => x.id !== id);
+    const o = $("figure").querySelector('option[value="' + id + '"]'); if (o) o.remove();
+    toast("Removed from this browser: the model, its saved paint and its pieces.", 5000);
+    const next = figureEntries()[0];
+    if (next) { $("figure").value = next.id; start(next); } else { disposeFigure(); S.fig = null; $("figure").hidden = true; showEmpty(); requestRender(); }
+  }
+
+  /* ---------- File menu ---------- */
+  function closeMenu() { $("fileMenu").hidden = true; $("fileMenuBtn").setAttribute("aria-expanded", "false"); }
+  $("fileMenuBtn").addEventListener("click", e => { e.stopPropagation(); const open = $("fileMenu").hidden; $("fileMenu").hidden = !open; $("fileMenuBtn").setAttribute("aria-expanded", String(open)); });
+  document.addEventListener("click", e => { if (!$("fileMenu").hidden && !e.target.closest(".menuwrap")) closeMenu(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeMenu(); $("guide").hidden = true; } });
+
+  /* ---------- light or dark look ---------- */
+  // Three settings in turn: follow the system, light, dark. Remembered in this browser.
+  const THEMES = ["auto", "light", "dark"];
+  const THEME_ICON = { auto: "M12 3a9 9 0 1 0 0 18zM12 3a9 9 0 0 1 0 18", light: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4", dark: "M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" };
+  const THEME_NAME = { auto: "follows your system", light: "light", dark: "dark" };
+  function setTheme(t, quiet) {
+    if (!THEMES.includes(t)) t = "auto";
+    if (t === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", t);
+    $("themeIcon").setAttribute("d", THEME_ICON[t]);
+    $("theme").setAttribute("aria-label", "Look: " + THEME_NAME[t]); $("theme").title = "Look: " + THEME_NAME[t] + " (click to change)";
+    try { localStorage.setItem("cutpage:theme", t); } catch (e) {}
+    if (!quiet) toast("Look: " + THEME_NAME[t] + ".", 1800);
+  }
+  $("theme").addEventListener("click", () => { let cur = "auto"; try { cur = localStorage.getItem("cutpage:theme") || "auto"; } catch (e) {} setTheme(THEMES[(THEMES.indexOf(cur) + 1) % 3]); });
+  { let t = "auto"; try { t = localStorage.getItem("cutpage:theme") || "auto"; } catch (e) {} setTheme(t, true); }
+
+  /* ---------- first-time guide ---------- */
+  function showGuide() { $("guide").hidden = false; }
+  $("showGuide").addEventListener("click", () => { closeMenu(); showGuide(); });
+  $("guideOk").addEventListener("click", () => { $("guide").hidden = true; try { localStorage.setItem("cutpage:guide", "1"); } catch (e) {} });
+  function maybeGuide() { let seen = false; try { seen = localStorage.getItem("cutpage:guide") === "1"; } catch (e) {} if (!seen) showGuide(); }
+
+  /* ---------- saving your own models in this browser ---------- */
+  // A small key-value store in IndexedDB: a paint for a big model is too large for the browser's simple storage.
+  const LocalStore = {
+    db: null,
+    open() {
+      if (this.db) return this.db;
+      this.db = new Promise((res, rej) => { try { const r = indexedDB.open("paint-to-cut", 1); r.onupgradeneeded = () => r.result.createObjectStore("saves"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); } catch (e) { rej(e); } });
+      return this.db;
+    },
+    async get(k) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction("saves").objectStore("saves").get(k); q.onsuccess = () => res(q.result || null); q.onerror = () => rej(q.error); }); },
+    async set(k, v) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction("saves", "readwrite"); t.objectStore("saves").put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); }); },
+    async del(k) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction("saves", "readwrite"); t.objectStore("saves").delete(k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); }); },
+  };
+  const localKey = () => "save:" + S.fig.cloth.meshId;
+  async function saveLocal() {
+    S.saving = true; $("save").disabled = true; updateSaveStatus();
+    try {
+      const d = paintData(); await LocalStore.set(localKey(), d);
+      // on a page with its own database, your own model's paint is stored there too (own/<model id>), so it is
+      // safe if this browser is cleared and can be read by whoever cuts the pieces
+      if (S.db && S.canSave && S.fig.local) {
+        try { await withTimeout(writeLayerDoc("own", S.layers.cut.labels.slice(), { name: S.fig.name, labels: d.labels, unpainted: d.unpainted, note: d.note, savedAt: d.savedAt, swatches: d.swatches, colourMarks: d.colourMarks }), 20000); await withTimeout(saveClonesDoc(d.savedAt), 20000); }
+        catch (e) { toast("Saved in this browser, but not to the page's storage (" + ((e && e.code) || "no connection") + ").", 6000); }
+      }
+      S.savedAt = d.savedAt; S.dirty = false; S.saving = false; clearDraft(); $("restore").hidden = true; updateSaveStatus();
+    } catch (e) { S.saving = false; updateSaveStatus("Not saved in this browser. Use File → Save paint to a file instead.", true); }
+    S.saving = false; $("save").disabled = false;
+  }
+  async function openLocal() {
+    let d = null;
+    try { d = await LocalStore.get(localKey()); } catch (e) {}
+    // the page's storage copy, when this browser has none or an older one
+    if (S.db && S.fig.local) {
+      try {
+        const r = await readLayerDoc("own");
+        if (r && (!d || Date.parse(r.doc.savedAt) > Date.parse(d.savedAt))) d = { format: "paint-to-cut", marks: CutCore.bytesToB64(r.marks), nFaces: S.nFaces, meshId: S.fig.cloth.meshId, labels: r.doc.labels, note: r.doc.note, savedAt: r.doc.savedAt, swatches: r.doc.swatches, colourMarks: r.doc.colourMarks };
+        const cs = await readLayerDoc("clones", true).catch(() => null);
+        if (cs && d && cs.doc.savedAt === d.savedAt) d.clones = CutCore.bytesToB64(cs.marks);
+      } catch (e) {}
+    }
+    try { if (d) { applyPaintData(d, true); S.savedAt = d.savedAt; } } catch (e) {}
+  }
+
+  /* ---------- start ---------- */
+  async function start(entry) {
+    try { await loadFigure(entry); }
+    catch (e) { showLoading((e && e.message) || "The model could not be opened."); }
+  }
+  async function boot() {
+    setTool("brush"); setSize(2); applyTheme();
+    dbReady = initDb();
+    resize();
+    // the figure list is optional: on its own the page starts empty and waits for a model
+    try { const r = await fetch("data/figures.json"); S.figures = r.ok ? await r.json() : []; } catch (e) { S.figures = []; }
+    if (!Array.isArray(S.figures)) S.figures = [];
+    const sel = $("figure");
+    // figures marked "done" in the list sit in their own group at the end of the menu
+    [["Figures", f => !f.done], ["Done", f => !!f.done]].forEach(([label, keep]) => {
+      const list = S.figures.filter(keep); if (!list.length) return;
+      const grp = document.createElement("optgroup"); grp.label = label; grp.dataset.group = label.toLowerCase();
+      list.forEach(f => { const o = document.createElement("option"); o.value = f.id; o.textContent = f.name; grp.appendChild(o); });
+      sel.appendChild(grp);
+    });
+    sel.hidden = !S.figures.length;
+    const kept = await listKeptModels();
+    const first = S.figures.find(f => !f.done) || S.figures[0];
+    if (first) sel.value = first.id;
+    maybeGuide();
+    if (first) await start(first);
+    else if (kept.length) { const e = S.localModels.find(x => x.id === kept[0].id); sel.value = e.id; await start(e); }
+    else showEmpty();
+    window.CutPage.ready = true;
+  }
+
+  /* ---------- find pieces (the piece finder, inside the page) ---------- */
+  // 20 photos of the model as it looks and 20 coloured by which way its surface faces; an outline finder (SAM 2.1,
+  // run in the browser) outlines each photo; outlines that agree across photos join faces into pieces.
+  // The runtime and model ship as script files beside the page (finder/model/); where they are missing the
+  // button stays hidden.
+  const Finder = { busy: false, cancel: false, worker: null, ready: false, loading: null, reject: null, gpu: false, times: null };
+  const PHOTO = 1024;
+  function finderAvailable() { return !!(window.FinderModel && window.FinderCore); }
+  function updateFinderUI() {
+    const ok = finderAvailable() && !!S.fig;
+    $("findPieces").hidden = !ok; $("findBox").hidden = !ok || !!S.pieces; $("savePiecesFile").hidden = !S.pieces;
+    $("findPieces").textContent = S.pieces ? "Find pieces again…" : "Find pieces automatically…";
+  }
+  function photoViews() {
+    const v = [];
+    for (let a = 0; a < 8; a++) v.push([a * Math.PI / 4, 0.05, 1, 0]);
+    for (const az of [0, Math.PI]) { v.push([az, 0.7, 1, 0]); v.push([az, -0.5, 1, 0]); }
+    for (let a = 0; a < 4; a++) { v.push([a * Math.PI / 2, 0.05, 0.55, 0.25]); v.push([a * Math.PI / 2, 0.05, 0.55, -0.25]); }
+    // the checks use fewer photos to stay quick
+    return window.__finderViews ? v.slice(0, window.__finderViews) : v;
+  }
+  // the photos: colour (RGBA, rows top down) and the face number under each pixel (-1 = background)
+  // The outline finder looks at 1024 x 1024 colour photos (smoothed edges); the face numbers and the kept outlines
+  // are 1448 x 1448, so small faces are still seen.
+  const ID_PHOTO = 1448;
+  function takePhotos(shape) {
+    const W = PHOTO, H = PHOTO, IW = ID_PHOTO, IH = ID_PHOTO, out = [];
+    const gl2 = renderer.capabilities.isWebGL2;
+    const rt = gl2 ? new THREE.WebGLMultisampleRenderTarget(W, H, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType }) : new THREE.WebGLRenderTarget(W, H, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType });
+    if (gl2) rt.samples = 4;
+    rt.texture.encoding = THREE.sRGBEncoding;
+    const idRt = new THREE.WebGLRenderTarget(IW, IH, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, format: THREE.RGBAFormat, type: THREE.UnsignedByteType });
+    const o = S.orbit, saved = { t: o.target.clone(), az: o.az, el: o.el, dist: o.dist, aspect: camera.aspect, str: strengthUniform.value, pcs: markUniforms.uShowPieces.value, mat: S.clothMesh.material };
+    const oldC = renderer.getClearColor(new THREE.Color()), oldA = renderer.getClearAlpha();
+    try {
+      strengthUniform.value = 0; markUniforms.uShowPieces.value = 0;
+      if (shape) S.clothMesh.material = new THREE.MeshNormalMaterial({ side: THREE.DoubleSide });
+      camera.aspect = 1; camera.updateProjectionMatrix();
+      const hf = S.homeFit, tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+      const dist1 = Math.max(hf.fitH, hf.halfW / tanH) * 1.12 + hf.depth;
+      const buf = new Uint8Array(W * H * 4), ibuf = new Uint8Array(IW * IH * 4);
+      for (const [az, el, zoom, dz] of photoViews()) {
+        o.target.copy(S.home.target); o.target.z += dz * hf.height; o.az = az; o.el = el; o.dist = dist1 * zoom; placeCamera();
+        renderer.setRenderTarget(rt); renderer.setClearColor(new THREE.Color(cssToken("--stage")), 1); renderer.clear(); renderer.render(scene, camera);
+        renderer.readRenderTargetPixels(rt, 0, 0, W, H, buf);
+        const rgb = new Uint8Array(W * H * 4);
+        for (let y = 0; y < H; y++) rgb.set(buf.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);
+        renderer.setRenderTarget(idRt); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(pickScene, camera);
+        renderer.readRenderTargetPixels(idRt, 0, 0, IW, IH, ibuf);
+        const ids = new Int32Array(IW * IH);
+        for (let y = 0; y < IH; y++) { const r = (IH - 1 - y) * IW * 4; for (let x = 0; x < IW; x++) { const p = r + x * 4; ids[y * IW + x] = (ibuf[p] | (ibuf[p + 1] << 8) | (ibuf[p + 2] << 16)) - 1; } }
+        out.push({ rgb, ids, w: W, h: H, iw: IW, ih: IH });
+      }
+    } finally {
+      renderer.setRenderTarget(null); renderer.setClearColor(oldC, oldA);
+      if (shape) { S.clothMesh.material.dispose(); S.clothMesh.material = saved.mat; }
+      strengthUniform.value = saved.str; markUniforms.uShowPieces.value = saved.pcs;
+      o.target.copy(saved.t); o.az = saved.az; o.el = saved.el; o.dist = saved.dist; camera.aspect = saved.aspect; camera.updateProjectionMatrix();
+      rt.dispose(); idRt.dispose(); cameraChanged();
+    }
+    return out;
+  }
+  function loadScript(src) {
+    return new Promise((res, rej) => { const s = document.createElement("script"); s.src = src; s.onload = () => res(); s.onerror = () => rej(new Error("Could not load " + src)); document.head.appendChild(s); });
+  }
+  // The outline finder runs in a background worker, so the page stays smooth (paint, turn, zoom) while it works.
+  // Everything it needs is handed to it as text (the runtime, the model, finder_core), which also works from disk.
+  function finderWorkerMain() {
+    const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
+    let ses = null, job = null;
+    const bytes = s => { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; };
+    const blobUrl = t => URL.createObjectURL(new Blob([t], { type: "text/javascript" }));
+    async function outline(ph) {
+      const n = ph.w * ph.h, x = new Float32Array(3 * n);
+      for (let c = 0; c < 3; c++) { const m = MEAN[c], sd = STD[c], o = c * n; for (let p = 0; p < n; p++) x[o + p] = (ph.rgb[p * 4 + c] / 255 - m) / sd; }
+      const t0 = performance.now();
+      const e = await ses.enc.run({ image: new ort.Tensor("float32", x, [1, 3, ph.h, ph.w]) });
+      const t1 = performance.now();
+      const sx = ph.iw / ph.w, sy = ph.ih / ph.h;
+      const pts = FinderCore.gridPoints(24, ph.w, ph.h, (px, py) => ph.ids[Math.floor((py + 0.5) * sy) * ph.iw + Math.floor((px + 0.5) * sx)] >= 0), cands = [];
+      for (let s = 0; s < pts.length; s += job.batch) {
+        const p = pts.slice(s, s + job.batch), P = new Float32Array(p.length * 2);
+        p.forEach((q, i) => { P[i * 2] = q[0] * 1024; P[i * 2 + 1] = q[1] * 1024; });
+        const r = await ses.dec.run({ image_embed: e.image_embed, high_res0: e.high_res0, high_res1: e.high_res1,
+          points: new ort.Tensor("float32", P, [p.length, 1, 2]), labels: new ort.Tensor("int32", new Int32Array(p.length).fill(1), [p.length, 1]) });
+        const low = r.low_res_masks.data, iou = r.iou.data, L = FinderCore.LOW * FinderCore.LOW;
+        for (let k = 0; k < iou.length; k++) if (iou[k] > 0.7) { const l = low.slice(k * L, (k + 1) * L); if (FinderCore.stability(l, 1) >= 0.85) cands.push({ low: l, iou: iou[k] }); }
+      }
+      const t2 = performance.now();
+      return { masks: FinderCore.keepOutlines(cands, ph.iw, ph.ih), encMs: t1 - t0, decMs: t2 - t1 };
+    }
+    self.onmessage = async ev => {
+      const m = ev.data;
+      try {
+        if (m.type === "init") {
+          importScripts(blobUrl(m.ort));
+          (0, eval)(m.core);
+          ort.env.wasm.wasmPaths = { mjs: blobUrl(m.glue) };
+          ort.env.wasm.wasmBinary = bytes(m.wasm);
+          ort.env.wasm.numThreads = m.threads;
+          const opts = { executionProviders: ["wasm"], graphOptimizationLevel: "all" };
+          const enc = await ort.InferenceSession.create(bytes(m.enc), opts);
+          // the outline step runs hundreds of times a photo: on the graphics card where the browser allows it
+          let dec = null, gpu = false;
+          if (m.gpu && self.navigator && navigator.gpu) { try { dec = await ort.InferenceSession.create(bytes(m.dec), { executionProviders: ["webgpu"], graphOptimizationLevel: "all" }); gpu = true; } catch (e) { dec = null; } }
+          if (!dec) dec = await ort.InferenceSession.create(bytes(m.dec), opts);
+          ses = { enc, dec };
+          self.postMessage({ type: "ready", gpu });
+        } else if (m.type === "start") {
+          // very dense models (over 400,000 faces) work on small patches of faces, about 100,000 patches in all
+          const fEdges = FinderCore.edgePairs(m.idx, m.F), k = m.patch || (m.F > 400000 ? Math.ceil(m.F / 100000) : 1);
+          const P = k > 1 ? FinderCore.facePatches(fEdges, m.F, k) : null, U = P ? P.n : m.F;
+          const edges = P ? FinderCore.patchEdges(fEdges, P.patch, U) : fEdges;
+          job = { F: m.F, U, map: P ? P.patch : null, scale: m.F / U, edges, batch: m.batch, evs: [FinderCore.newEvidence(edges), FinderCore.newEvidence(edges)] };
+          self.postMessage({ type: "started", patches: P ? U : 0 });
+        } else if (m.type === "photo") {
+          const r = await outline(m.photo), ids = m.photo.ids, map = job.map;
+          if (map) for (let p = 0; p < ids.length; p++) if (ids[p] >= 0) ids[p] = map[ids[p]];
+          FinderCore.liftPhoto(job.evs[m.set], ids, r.masks, job.U, 0.3);
+          self.postMessage({ type: "photo", encMs: r.encMs, decMs: r.decMs });
+        } else if (m.type === "finish") {
+          const { U, map, scale } = job;
+          let seen = m.seen;
+          if (map) { seen = new Uint8Array(U); for (let f = 0; f < job.F; f++) if (m.seen[f]) seen[map[f]] = 1; }
+          const merged = FinderCore.merge(FinderCore.combineMin(job.evs[0], job.evs[1]), U, 0.8, Math.max(1, Math.round(300 / scale)));
+          const pu = FinderCore.unseen(merged, seen, job.edges, U, Math.round(3000 / scale), Math.round(500 / scale));
+          const pieces = map ? Uint32Array.from(map, u => pu[u]) : Uint32Array.from(pu);
+          job = null;
+          self.postMessage({ type: "pieces", pieces }, [pieces.buffer]);
+        }
+      } catch (e) { self.postMessage({ type: "error", message: (e && e.message) || String(e) }); }
+    };
+  }
+  // one message to the worker and its answer (the worker answers each message in turn)
+  function finderAsk(msg, transfer) {
+    return new Promise((res, rej) => {
+      const w = Finder.worker;
+      w.onmessage = e => { if (e.data.type === "error") rej(new Error(e.data.message)); else res(e.data); };
+      w.onerror = e => { e.preventDefault && e.preventDefault(); rej(new Error((e && e.message) || "the piece finder stopped")); };
+      Finder.reject = rej;
+      w.postMessage(msg, transfer || []);
+    });
+  }
+  // the runtime and model, loaded once per visit
+  async function loadFinder(note) {
+    if (Finder.worker && Finder.ready) return;
+    if (Finder.loading) return Finder.loading;
+    Finder.loading = (async () => {
+      const files = window.FinderModel.files, A = window.FinderAssets || {};
+      for (let i = 0; i < files.length; i++) {
+        const key = { "ort_js.js": "ort", "ort_glue.js": "glue", "ort_wasm.js": "wasm", "sam_enc.js": "enc", "sam_dec.js": "dec" }[files[i]];
+        if (key && window.FinderAssets && window.FinderAssets[key]) continue;
+        note("Loading the piece finder (" + (i + 1) + " of " + files.length + ")…"); await loadScript("finder/model/" + files[i]);
+      }
+      note("Starting the piece finder…");
+      const B = window.FinderAssets;
+      Finder.worker = new Worker(URL.createObjectURL(new Blob(["(" + finderWorkerMain.toString() + ")();"], { type: "text/javascript" })));
+      // every core but one (so painting stays smooth), where the page is served with the headers that allow it
+      const threads = window.crossOriginIsolated ? Math.min(8, Math.max(1, (navigator.hardwareConcurrency || 2) - 1)) : 1;
+      const r = await finderAsk({ type: "init", ort: B.ort, glue: B.glue, wasm: B.wasm, enc: B.enc, dec: B.dec, core: FinderCore.source, threads, gpu: !window.__noGpu });
+      Finder.gpu = r.gpu; Finder.threads = threads; Finder.ready = true;
+    })();
+    try { return await Finder.loading; } catch (e) { stopFinderWorker(); throw e; } finally { Finder.loading = null; }
+  }
+  function stopFinderWorker() {
+    if (Finder.worker) Finder.worker.terminate();
+    Finder.worker = null; Finder.ready = false;
+    if (Finder.reject) { const r = Finder.reject; Finder.reject = null; r(new Error("cancelled")); }
+  }
+  function fmtMinutes(ms) { const m = Math.round(ms / 60000); return m < 1 ? "under a minute" : m === 1 ? "about a minute" : "about " + m + " minutes"; }
+  function finderNote(text, frac) {
+    $("findText").textContent = text; $("findBar").style.width = Math.round((frac || 0) * 100) + "%";
+  }
+  async function findPieces() {
+    if (!S.fig) return;
+    if (Finder.busy) { toast("The piece finder is still working on " + Finder.model + ". It does one model at a time.", 5000); return; }
+    if (!finderAvailable()) { toast("The piece finder is not included in this copy of the tool."); return; }
+    Finder.busy = true; Finder.cancel = false; $("finding").hidden = false; $("findPieces").disabled = true; $("findPiecesBtn").disabled = true;
+    // the run belongs to this model: other models can be opened meanwhile, and the pieces are kept for this one
+    const F = S.nFaces, mesh0 = S.fig.cloth.meshId, name0 = S.fig.name || "this model", t0 = performance.now();
+    const here = () => !!S.fig && S.fig.cloth.meshId === mesh0;
+    Finder.model = "\u201c" + name0 + "\u201d";
+    try {
+      await loadFinder(t => finderNote(t, 0));
+      if (Finder.cancel) throw new Error("cancelled");
+      finderNote("Taking photos of the model…", 0);
+      await new Promise(res => setTimeout(res, 30));
+      const sets = [takePhotos(false), takePhotos(true)];
+      const seen = new Uint8Array(F);
+      for (const ph of sets[0]) for (let p = 0; p < ph.ids.length; p++) if (ph.ids[p] >= 0) seen[ph.ids[p]] = 1;
+      const st = await finderAsk({ type: "start", idx: S.idx, F, batch: Finder.gpu ? 64 : 16, patch: window.__finderPatch || 0 });
+      Finder.patches = st.patches;
+      const total = sets[0].length + sets[1].length; let done = 0; const tStart = performance.now();
+      Finder.times = { enc: 0, dec: 0 };
+      for (let si = 0; si < 2; si++) {
+        const set = sets[si];
+        while (set.length) {
+          const left = done ? (performance.now() - tStart) / done * (total - done) : 0;
+          finderNote((here() ? "Finding outlines: " : "Finding outlines for " + Finder.model + ": ") + "photo " + (done + 1) + " of " + total + (done ? ", " + fmtMinutes(left) + " left" : "") + ". You can keep painting." , done / total);
+          // each photo goes to the worker as it is (no copy) and is let go here
+          const ph = set.shift();
+          const r = await finderAsk({ type: "photo", set: si, photo: ph }, [ph.rgb.buffer, ph.ids.buffer]);
+          Finder.times.enc += r.encMs; Finder.times.dec += r.decMs;
+          done++;
+        }
+      }
+      finderNote("Joining outlines into pieces…", 1);
+      const pieces = (await finderAsk({ type: "finish", seen }, [seen.buffer])).pieces;
+      const count = new Set(pieces).size, took = fmtMinutes(performance.now() - t0).replace("about ", "");
+      const d = { format: "paint-to-cut-pieces", version: 1, model: name0, meshId: mesh0, nFaces: F, count, pieces: CutCore.bytesToB64(new Uint8Array(pieces.buffer)) };
+      try { await LocalStore.set("pieces:" + mesh0, d); } catch (e) {}
+      if (!here()) { toast(count + (count === 1 ? " piece" : " pieces") + " found for " + Finder.model + " in " + took + ". They are there when you open that model again.", 9000); return; }
+      usePieces(pieces);
+      $("pieceFill").checked = true; S.pieceFill = true;
+      toast(d.count + (d.count === 1 ? " piece" : " pieces") + " found in " + fmtMinutes(performance.now() - t0).replace("about ", "") + ". With Fill, one click now takes a whole piece. File > Save found pieces keeps them as a file.", 9000);
+    } catch (e) {
+      const m = (e && e.message) || String(e);
+      toast(m === "cancelled" ? "Finding pieces stopped." : "The piece finder could not finish (" + m + ").", 7000);
+    } finally {
+      Finder.busy = false; $("finding").hidden = true; $("findPieces").disabled = false; $("findPiecesBtn").disabled = false;
+    }
+  }
+  function piecesData() {
+    const pc = Uint32Array.from(S.pieces), u8 = new Uint8Array(pc.buffer);
+    return { format: "paint-to-cut-pieces", version: 1, model: S.fig.name, meshId: S.fig.cloth.meshId, nFaces: S.nFaces, count: new Set(pc).size, pieces: CutCore.bytesToB64(u8) };
+  }
+  async function savePiecesFile() {
+    if (!S.pieces) { toast("This model has no found pieces yet."); return; }
+    const name = (S.fig.name || "model").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_") || "model";
+    await offerFile(name + ".pieces.json", new Blob([JSON.stringify(piecesData())], { type: "application/json" }));
+  }
+  $("findPieces").addEventListener("click", () => { closeMenu(); findPieces(); });
+  $("findPiecesBtn").addEventListener("click", () => findPieces());
+  $("savePiecesFile").addEventListener("click", () => { closeMenu(); savePiecesFile(); });
+  $("findCancel").addEventListener("click", () => { Finder.cancel = true; finderNote("Stopping…"); stopFinderWorker(); });
+
+  /* ---------- hooks for the automated checks ---------- */
+  window.CutPage = {
+    ready: false,
+    state: S,
+    test: {
+      bufferSize: () => ({ w: pick.w, h: pick.h }),
+      fillAt(px, py, edge, sens, piece) { const e0 = S.edgeFill, s0 = S.edgeSens, p0 = S.pieceFill; S.edgeFill = !!edge; S.pieceFill = !!piece; if (sens) S.edgeSens = sens; ensurePick(); const n0 = S.undo.length; fillAt(px, py); S.edgeFill = e0; S.edgeSens = s0; S.pieceFill = p0; return S.undo.length > n0 ? S.undo[S.undo.length - 1].faces.length : 0; },
+      project(x, y, z) { const v = new THREE.Vector3(x, y, z).project(camera); return { x: (v.x + 1) / 2 * pick.w, y: (1 - v.y) / 2 * pick.h }; },
+      wall(p0, p1) { return addWall(p0, p1); },
+      clearWalls() { clearWalls(); },
+      meshCount: () => scene.children.filter(o => o.isMesh).length + pickScene.children.filter(o => o.isMesh).length,
+      async useFigure(id) { const f = figureEntries().find(x => x.id === id); if (!f) throw new Error("no figure " + id); $("figure").value = id; await loadFigure(f); },
+      setTool, setSize, selectLabel, setPreview, setView, undo, redo, useLayer, fillHoles, smoothEdges, dropperAt, save: () => save(),
+      colourCopy: () => S.layers.colour.labels.slice(), cutCopy: () => S.layers.cut.labels.slice(),
+      // faces changed by a stroke that lie behind the body or more than tol behind the cloth seen at their own centre
+      behindCount(faces, tol) {
+        renderPick(); let n = 0;
+        for (const f of faces) {
+          const c = S.centroids, v = new THREE.Vector3(c[f * 3], c[f * 3 + 1], c[f * 3 + 2]).project(camera);
+          const x = Math.floor((v.x + 1) / 2 * pick.w), y = Math.floor((1 - v.y) / 2 * pick.h);
+          if (x < 0 || y < 0 || x >= pick.w || y >= pick.h) continue;
+          const seen = faceAt(x, y), o = ((pick.h - 1 - y) * pick.w + x) * 4;
+          if (seen < 0) { if (pick.buf[o + 3] > 0) n++; continue; }
+          if (viewDepth(f) > viewDepth(seen) + tol) n++;
+        }
+        return n;
+      },
+      mainPixels() {
+        const w = 200, h = 200, rt = new THREE.WebGLRenderTarget(w, h);
+        renderer.setRenderTarget(rt); renderer.render(scene, camera);
+        const buf = new Uint8Array(w * h * 4); renderer.readRenderTargetPixels(rt, 0, 0, w, h, buf);
+        renderer.setRenderTarget(null); rt.dispose(); return Array.from(buf);
+      },
+      orbit: () => ({ x: S.orbit.target.x, y: S.orbit.target.y, z: S.orbit.target.z, az: S.orbit.az, dist: S.orbit.dist }),
+      swatches: () => S.layers.colour.list.map(l => ({ id: l.id, color: l.color })),
+      setTestHits(on) { S.testHits = on ? [] : null; }, testHits: () => S.testHits ? S.testHits.slice() : [],
+      setThrough: v => { S.through = v; $("through").checked = v; },
+      labelsCopy: () => S.labels.slice(),
+      visibleFaces() { renderPick(); const s = new Set(); const b = pick.buf; for (let i = 0; i < b.length; i += 4) { const id = (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16)) - 1; if (id >= 0) s.add(id); } return [...s]; },
+      // a scripted brush stroke through drawing-buffer points; returns ms of script time
+      stroke(points, label) {
+        const t0 = performance.now();
+        ensurePick(); beginStroke(label == null ? S.current : label); lastPt = null;
+        for (const p of points) brushTo(p.x, p.y);
+        updateCountsUI();
+        const n = endStroke();
+        return { ms: performance.now() - t0, changed: n };
+      },
+      // export and open without the file prompts: files as base64
+      async exportFiles() { const r = await buildExportFiles(); const b64 = u8 => { let bin = ""; for (let i = 0; i < u8.length; i += 32768) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 32768)); return btoa(bin); }; return { names: r.names, files: r.files.map(f => ({ name: f.name, size: f.data.length, b64: b64(f.data) })) }; },
+      openFileList: files => openModelFiles(files),
+      localDel: k => LocalStore.del(k),
+      async openFiles(list) { const files = list.map(f => { const bin = atob(f.b64), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return new File([u8], f.name); }); return openModelFiles(files); },
+      zipBlob: files => CutCore.zipStore(files),
+      texColour: f => texColourAt(f),
+      async zipB64(files) { const u8 = new Uint8Array(await CutCore.zipStore(files).arrayBuffer()); let bin = ""; for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]); return btoa(bin); },
+      paintData: () => paintData(),
+      cloneSource: (px, py) => setCloneSource(px, py),
+      cloneStroke(points) {
+        ensurePick(); if (!beginClone(points[0].x, points[0].y)) return { changed: 0 }; lastPt = null;
+        for (const p of points) brushTo(p.x, p.y);
+        return { changed: endStroke() };
+      },
+      clonePairs: () => Array.from(clonePairs()),
+      // the piece finder
+      findPieces: () => findPieces(),
+      finder: () => ({ busy: Finder.busy, gpu: Finder.gpu, threads: Finder.threads || 0, patches: Finder.patches || 0, times: Finder.times || null, worker: !!Finder.worker, available: finderAvailable(), pieces: S.pieces ? new Set(S.pieces).size : 0, text: $("findText").textContent }),
+      cancelFind() { Finder.cancel = true; stopFinderWorker(); },
+      localGet: k => LocalStore.get(k),
+      piecesFile: () => S.pieces ? piecesData() : null,
+      photoPng(i, shape) { const p = takePhotos(!!shape)[i], c = document.createElement("canvas"); c.width = p.w; c.height = p.h; const x = c.getContext("2d"), im = x.createImageData(p.w, p.h); im.data.set(p.rgb); x.putImageData(im, 0, 0); return c.toDataURL("image/png"); },
+      photos(shape) { return takePhotos(!!shape).map(p => ({ w: p.w, h: p.h, onFig: p.ids.reduce((a, v) => a + (v >= 0 ? 1 : 0), 0) })); },
+      previewFaceCount: () => S.preview ? previewDrawnCount() : -1,
+      // faces in the face-number picture as it is now (null if it is waiting to be redrawn)
+      // shape view for tools that photograph the figure: cloth coloured by which way its surface faces
+      shapeView(on) {
+        if (on) { S._mat = S.clothMesh.material; S.clothMesh.material = new THREE.MeshNormalMaterial({ side: THREE.DoubleSide }); }
+        else if (S._mat) { S.clothMesh.material.dispose(); S.clothMesh.material = S._mat; S._mat = null; }
+        requestRender();
+      },
+      // the face-number picture as it is now, as base64 (for tools that photograph the figure)
+      pickDump() { renderPick(); let bin = ""; const b = pick.buf; for (let i = 0; i < b.length; i += 32768) bin += String.fromCharCode.apply(null, b.subarray(i, i + 32768)); return { w: pick.w, h: pick.h, data: btoa(bin) }; },
+      pickedNow() { if (pick.dirty) return null; const s = new Set(), b = pick.buf; for (let i = 0; i < b.length; i += 4) { const id = (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16)) - 1; if (id >= 0) s.add(id); } return [...s]; },
+      keptCount: () => CutCore.keptCount(S.labels, S.fig.unpainted),
+      // pixels that differ from the background; clothOnly hides the body and extra pieces for the count
+      drawnPixels(clothOnly) {
+        const w = 160, h = 160, rt = new THREE.WebGLRenderTarget(w, h);
+        const others = [S.bodyMesh, ...S.ctx.map(c => c.mesh)], was = others.map(o => o.visible);
+        if (clothOnly) others.forEach(o => { o.visible = false; });
+        renderer.setRenderTarget(rt); renderer.render(scene, camera);
+        others.forEach((o, i) => { o.visible = was[i]; });
+        const buf = new Uint8Array(w * h * 4); renderer.readRenderTargetPixels(rt, 0, 0, w, h, buf);
+        renderer.setRenderTarget(null); rt.dispose();
+        const c = new THREE.Color(cssToken("--stage")); const bg = [c.r * 255, c.g * 255, c.b * 255];
+        let n = 0; for (let i = 0; i < buf.length; i += 4) if (Math.abs(buf[i] - bg[0]) + Math.abs(buf[i + 1] - bg[1]) + Math.abs(buf[i + 2] - bg[2]) > 24) n++;
+        return n;
+      },
+    },
+  };
+  boot();
+})();
+</script>
+</body>
+</html>
