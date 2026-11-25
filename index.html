@@ -2204,6 +2204,10 @@ const ModelIO = (() => {
     if (piecesFiles.length) await openPiecesFile(piecesFiles[0]);
     return true;
   }
+  // Phones and tablets: their file pickers turn an extension list they do not know (.glb, .fbx...) into "images only", so
+  // there the pickers take any file and the page checks what was picked (a file that is not a model gets a plain message)
+  if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent)) || (window.matchMedia && matchMedia("(pointer: coarse)").matches))
+    for (const id of ["modelInput", "paintInput", "piecesInput"]) $(id).removeAttribute("accept");
   $("openModel").addEventListener("click", () => $("modelInput").click());
   $("emptyOpen").addEventListener("click", () => $("modelInput").click());
   $("modelInput").addEventListener("change", e => { const f = e.target.files; if (f && f.length) openModelFiles(f); e.target.value = ""; });
