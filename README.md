@@ -10,6 +10,9 @@ hit export, and get one file per part. It runs in your browser and your model ne
 
 **Try it:** https://khelevaster-ship-it.github.io/Meshshears/
 
+- **Hugging Face Space:** https://huggingface.co/spaces/Khelevaster/Meshshears
+- **Mobile & tablet support:** Phones and tablets can pick model files directly in the import buttons.
+
 Or grab a copy (the green Code button, then Download ZIP), unzip it and double-click `index.html`. That works
 offline.
 
@@ -80,6 +83,9 @@ AI-generated 3D character so they can be fitted, rigged or swapped; cutting up s
 preparing game assets for Unity, Unreal, Godot or Blender. It is a browser-based mesh segmentation tool (paint to
 select, fill by colour and folds, plus an automatic piece finder built on Segment Anything) that reads GLB, glTF, OBJ,
 FBX, STL and PLY and exports each piece as its own GLB.
+
+## Disclosure
+MeshShears is AI-made (built by the developer with AI help).
 
 ## Credits and licence
 
