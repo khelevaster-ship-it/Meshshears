@@ -3041,7 +3041,8 @@ const ModelIO = (() => {
           if (map) for (let p = 0; p < ids.length; p++) if (ids[p] >= 0) ids[p] = map[ids[p]];
           // what the photos of the model as it looks saw (faces, or patches)
           if (m.set === 0) { const sn = job.seen || (job.seen = new Uint8Array(job.U)); for (let p = 0; p < ids.length; p++) if (ids[p] >= 0) sn[ids[p]] = 1; }
-          const used = FinderCore.liftPhoto(job.evs[m.set], ids, m.masks, job.U, 0.3);
+          // no area cap (1.0): an outline of a whole robe or tunic can cover well over 30% of the model, and a 0.3 cap threw those away
+          const used = FinderCore.liftPhoto(job.evs[m.set], ids, m.masks, job.U, 1.0);
           post(m, { type: "lifted", used, liftMs: performance.now() - tl });
         } else if (m.type === "finish" || m.type === "peek") {
           const { U, map, scale } = job;
