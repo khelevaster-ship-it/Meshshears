@@ -303,7 +303,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
           <div class="row"><label for="edgeSens" class="grow">Edge sensitivity</label><span id="edgeSensVal" class="val">50</span></div>
           <input id="edgeSens" type="range" min="1" max="100" step="1" value="50" aria-label="Fill edge sensitivity: higher stops at smaller colour changes">
         </div>
-        <label class="switch" data-options-for="brush fill eraser clone" hidden><input id="through" type="checkbox"> Paint through (also paints the layers behind)</label>
+        <label class="switch" data-options-for="brush fill lasso eraser clone" hidden><input id="through" type="checkbox"> Paint through (also paints the layers behind)</label>
         <div class="row" data-options-for="wall" hidden><button id="undoWall" title="Takes away the last wall you drew">Undo wall</button><button id="clearWalls" title="Takes away every wall (your paint stays)">Clear walls</button><span id="wallInfo" class="sub"></span></div>
         <div class="tool-options-group" data-options-for="segment" hidden>
           <button id="findPiecesBtn" title="Photographs the model from 40 sides and outlines what it sees; afterwards one Fill click takes a whole piece">Find pieces automatically</button>
