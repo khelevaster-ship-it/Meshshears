@@ -48,7 +48,10 @@ html { height: 100%; box-sizing: border-box; }
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 14px; overflow: hidden; }
-#app { display: grid; grid-template-columns: minmax(0, 1fr) 316px; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+#app { --sidebar-width: 316px; --sidebar-min-width: 260px; --sidebar-divider-width: 14px; --stage-min-width: 360px;
+  display: grid; height: 100%; grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-divider-width)
+    clamp(var(--sidebar-min-width), var(--sidebar-width), calc(100% - var(--sidebar-divider-width) - var(--stage-min-width))); }
 svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
 /* top bar */
@@ -88,7 +91,6 @@ svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; s
 .findtrack { grid-column: 1; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 #findBar { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
 #findCancel { grid-row: 1 / span 2; grid-column: 2; }
-#findBox { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
 #empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; }
 .emptycard { max-width: 380px; text-align: center; background: var(--card); border: 2px dashed var(--line); border-radius: 16px; padding: 32px 24px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .emptycard svg { width: 40px; height: 40px; color: var(--accent); }
@@ -101,12 +103,20 @@ svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; s
 #guide ol { margin: 10px 0 14px; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; line-height: 1.45; }
 
 /* panel */
-#panel { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; overflow-x: hidden; min-width: 0;
+#sidebarResize { display: grid; place-items: center; background: var(--panel); border-inline: 1px solid var(--line);
+  cursor: col-resize; touch-action: none; }
+#sidebarResize::before { content: ""; width: 3px; height: 34px; border-radius: 2px; background: var(--muted); }
+#sidebarResize:hover, #sidebarResize[data-resizing] { background: var(--accent-soft); }
+#sidebarResize:hover::before, #sidebarResize[data-resizing]::before { background: var(--accent); }
+#sidebarResize:focus-visible { outline-offset: -2px; }
+#app:has(#sidebarResize[data-resizing]) { cursor: col-resize; user-select: none; }
+#panel { background: var(--panel); overflow-y: auto; overflow-x: hidden; min-width: 0;
   padding-block: 12px 24px; padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px));
   display: flex; flex-direction: column; gap: 10px; }
 @media (max-width: 760px) {
   #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 52% minmax(0, 1fr); }
-  #panel { border-left: 0; border-top: 1px solid var(--line); }
+  #sidebarResize { display: none; }
+  #panel { border-top: 1px solid var(--line); }
   .brand span { display: none; }
   .figpick { flex-basis: 100%; order: 3; }
   .figpick:has(select[hidden]) { flex-basis: auto; order: 0; flex-grow: 0; }
@@ -114,6 +124,17 @@ svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; s
   .barright { margin-left: auto; }
 }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 9px; min-width: 0; box-shadow: var(--shadow); }
+.sidebar-section { position: relative; flex: none; min-width: 0; }
+.sidebar-section:has(> .card[hidden]) { display: none; }
+.sidebar-section > .card > :first-child { margin-left: 26px; }
+.sidebar-section[data-dragging] > .card { opacity: .55; }
+.sidebar-section[data-drop]::after { content: ""; position: absolute; inset-inline: 2px; height: 3px; border-radius: 2px; background: var(--accent); pointer-events: none; }
+.sidebar-section[data-drop="beforebegin"]::after { top: -6px; }
+.sidebar-section[data-drop="afterend"]::after { bottom: -6px; }
+button.sidebar-grip { position: absolute; top: 7px; left: 7px; width: 26px; min-height: 26px; padding: 0; background: transparent;
+  border-color: transparent; color: var(--muted); cursor: grab; touch-action: none; pointer-events: auto; }
+.sidebar-section[data-dragging] .sidebar-grip { cursor: grabbing; }
+.tool-options-group { display: flex; flex-direction: column; gap: 9px; }
 details.card { gap: 0; }
 details.card[open] { gap: 9px; }
 details.card > summary { cursor: pointer; font-weight: 600; font-size: 13px; list-style: none; display: flex; align-items: center; justify-content: space-between; min-height: 22px; }
@@ -233,84 +254,110 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
       <button id="guideOk" class="primary">Got it</button>
     </div>
   </div>
+  <div id="sidebarResize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="panel" aria-label="Sidebar width"
+    title="Drag to resize the sidebar. Use the left and right arrows when focused."></div>
   <aside id="panel" aria-label="Cut tools">
-    <section class="card">
-      <div class="modes seg" role="group" aria-label="What you are painting">
-        <button id="mode-cut" data-mode="cut" title="Mark which pieces to keep and what to remove">Pieces to keep</button>
-        <button id="mode-colour" data-mode="colour" title="Mark places whose colour should change">Colours to fix</button>
-      </div>
-      <div class="sub"><span id="faceTotal" class="big">0</span> <span id="faceWord">cloth faces</span></div>
-    </section>
+    <div class="sidebar-section" data-sidebar-section="mode" data-sidebar-label="Painting mode">
+      <section class="card">
+        <div class="modes seg" role="group" aria-label="What you are painting">
+          <button id="mode-cut" data-mode="cut" title="Mark which pieces to keep and what to remove">Pieces to keep</button>
+          <button id="mode-colour" data-mode="colour" title="Mark places whose colour should change">Colours to fix</button>
+        </div>
+        <div class="sub"><span id="faceTotal" class="big">0</span> <span id="faceWord">cloth faces</span></div>
+      </section>
+    </div>
 
-    <section class="card">
-      <h2>Tools</h2>
-      <div class="tools" role="group" aria-label="Tools">
-        <button id="tool-brush" data-tool="brush" title="Brush (B)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 3l3 3-9 9-3-3zM9 12c-3 0-4 2-4 4s-1 3-2 3c2 2 8 2 9-3"/></svg><span>Brush</span></button>
-        <button id="tool-fill" data-tool="fill" title="Fill (F)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11l7-7 7 7-7 7zM19 15s2 2.5 2 4a2 2 0 0 1-4 0c0-1.5 2-4 2-4z"/></svg><span>Fill</span></button>
-        <button id="tool-lasso" data-tool="lasso" title="Lasso (L)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4c5 0 9 2.5 9 6s-4 6-9 6-9-2.5-9-6 4-6 9-6zM7 15c-1 2 0 4 2 5"/></svg><span>Lasso</span></button>
-        <button id="tool-eraser" data-tool="eraser" title="Eraser (E)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 20h12M4 15l9-9 6 6-7 7H8z"/></svg><span>Eraser</span></button>
-        <button id="tool-turn" data-tool="turn" title="Turn the model with one finger or the left button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/></svg><span>Turn</span></button>
-        <button id="tool-dropper" data-tool="dropper" hidden title="Click the model to take its colour for the current swatch (I)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4l6 6M17 7l-10 10-3 1 1-3 10-10"/></svg><span>Colour</span></button>
-        <button id="tool-clone" data-tool="clone" hidden title="Clone (K): Alt-click (or tap, the first time) where to copy from, then paint where that look should go. Copies the texture, every colour in it."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6v5H9zM12 8v4M5 12h14l-2 9H7z"/></svg><span>Clone</span></button>
-        <button id="tool-wall" data-tool="wall" title="Drag a straight line across the model where a piece ends. Fill will not cross it."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20L20 4"/></svg><span>Wall</span></button>
-      </div>
-      <div class="row"><label for="size" class="grow">Brush size</label><span id="sizeVal" class="val">1.0 cm</span></div>
-      <input id="size" type="range" min="0.2" max="8" step="0.1" value="1" aria-label="Brush size in centimetres">
-    </section>
+    <div class="sidebar-section" data-sidebar-section="tools" data-sidebar-label="Tools">
+      <section class="card">
+        <h2>Tools</h2>
+        <div class="tools" role="group" aria-label="Tools">
+          <button id="tool-brush" data-tool="brush" title="Brush (B)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 3l3 3-9 9-3-3zM9 12c-3 0-4 2-4 4s-1 3-2 3c2 2 8 2 9-3"/></svg><span>Brush</span></button>
+          <button id="tool-fill" data-tool="fill" title="Fill (F)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11l7-7 7 7-7 7zM19 15s2 2.5 2 4a2 2 0 0 1-4 0c0-1.5 2-4 2-4z"/></svg><span>Fill</span></button>
+          <button id="tool-lasso" data-tool="lasso" title="Lasso (L)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4c5 0 9 2.5 9 6s-4 6-9 6-9-2.5-9-6 4-6 9-6zM7 15c-1 2 0 4 2 5"/></svg><span>Lasso</span></button>
+          <button id="tool-eraser" data-tool="eraser" title="Eraser (E)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 20h12M4 15l9-9 6 6-7 7H8z"/></svg><span>Eraser</span></button>
+          <button id="tool-turn" data-tool="turn" title="Turn the model with one finger or the left button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/></svg><span>Turn</span></button>
+          <button id="tool-dropper" data-tool="dropper" hidden title="Click the model to take its colour for the current swatch (I)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4l6 6M17 7l-10 10-3 1 1-3 10-10"/></svg><span>Colour</span></button>
+          <button id="tool-clone" data-tool="clone" hidden title="Clone (K): Alt-click (or tap, the first time) where to copy from, then paint where that look should go. Copies the texture, every colour in it."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6v5H9zM12 8v4M5 12h14l-2 9H7z"/></svg><span>Clone</span></button>
+          <button id="tool-wall" data-tool="wall" title="Drag a straight line across the model where a piece ends. Fill will not cross it."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20L20 4"/></svg><span>Wall</span></button>
+          <button id="tool-segment" data-tool="segment" title="Find pieces automatically" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h5a3 3 0 0 1 6 0h5v5a3 3 0 0 0 0 6v5h-5a3 3 0 0 0-6 0H4v-5a3 3 0 0 0 0-6z"/></svg><span>Segment</span></button>
+        </div>
+      </section>
+    </div>
 
-    <section class="card">
-      <h2 id="labelsTitle">Labels</h2>
-      <div id="labels" class="labels"></div>
-      <div id="unpaintedNote" class="sub"></div>
-      <div class="row"><button id="addLabel" class="ghost wide">+ Add a label</button></div>
-      <div class="row three"><button id="fillHoles" title="Small unpainted spots surrounded by one label take that label">Fill holes</button><button id="smoothEdges" title="Evens out jagged outlines by one face">Smooth edges</button><button id="clearAll" title="Wipes all paint in this mode (locked labels stay). Undo brings it back.">Clear all</button></div>
-    </section>
+    <div class="sidebar-section" data-sidebar-section="tool-options" data-sidebar-label="Tool Options">
+      <details class="card" id="toolOptions" open hidden>
+        <summary>Tool Options</summary>
+        <div class="tool-options-group" data-options-for="brush eraser clone" hidden>
+          <div class="row"><label for="size" class="grow">Brush size</label><span id="sizeVal" class="val">1.0 cm</span></div>
+          <input id="size" type="range" min="0.2" max="8" step="0.1" value="1" aria-label="Brush size in centimetres">
+        </div>
+        <div class="tool-options-group" data-options-for="fill" hidden>
+          <div id="piecesBox" hidden>
+            <label class="switch"><input id="pieceFill" type="checkbox" checked> Fill takes a whole found piece</label>
+            <label class="switch"><input id="showPieces" type="checkbox"> Show found pieces</label>
+            <div id="pieceSizeRow" hidden><div class="row"><label for="pieceSize" class="grow">Piece size</label><span class="val">bigger ↔ smaller</span></div>
+            <input id="pieceSize" type="range" min="0" max="4" step="1" value="2" aria-label="Found piece size: left joins more, right splits more"></div>
+            <div class="row"><button id="splitPiece" title="Then click a found piece to cut it into smaller parts">Split a piece</button><button id="joinPieces" title="Then click two found pieces to make them one">Join two pieces</button></div>
+          </div>
+          <label class="switch"><input id="edgeFill" type="checkbox" checked> Fill stops at colour changes and sharp folds</label>
+          <div class="row"><label for="edgeSens" class="grow">Edge sensitivity</label><span id="edgeSensVal" class="val">50</span></div>
+          <input id="edgeSens" type="range" min="1" max="100" step="1" value="50" aria-label="Fill edge sensitivity: higher stops at smaller colour changes">
+        </div>
+        <label class="switch" data-options-for="brush fill eraser clone" hidden><input id="through" type="checkbox"> Paint through (also paints the layers behind)</label>
+        <div class="row" data-options-for="wall" hidden><button id="undoWall" title="Takes away the last wall you drew">Undo wall</button><button id="clearWalls" title="Takes away every wall (your paint stays)">Clear walls</button><span id="wallInfo" class="sub"></span></div>
+        <div class="tool-options-group" data-options-for="segment" hidden>
+          <button id="findPiecesBtn" title="Photographs the model from 40 sides and outlines what it sees; afterwards one Fill click takes a whole piece">Find pieces automatically</button>
+          <div id="findAgainHint" class="sub" hidden>To refind pieces, go to the File menu and select <strong id="findAgainCommand"></strong></div>
+          <label class="switch" title="Ten photos of each kind instead of twenty: about twice as fast, but small pieces seen only up close may be missed"><input type="checkbox" id="findQuick"> Quick: 20 photos instead of 40</label>
+          <span id="findDuration" class="sub">Takes a few minutes; you can keep working.</span>
+        </div>
+      </details>
+    </div>
 
-    <section class="card">
-      <label class="switch strong"><input id="preview" type="checkbox"> Preview the cut</label>
-      <div id="previewNote" class="sub">Shows only what will be kept.</div>
-      <div class="views">
-        <button id="view-front" data-view="front">Front</button>
-        <button id="view-back" data-view="back">Back</button>
-        <button id="view-left" data-view="left">Left</button>
-        <button id="view-right" data-view="right">Right</button>
-        <button id="view-reset" data-view="reset">Reset</button>
-      </div>
-    </section>
+    <div class="sidebar-section" data-sidebar-section="labels" data-sidebar-label="Labels or colours">
+      <details class="card" open>
+        <summary><h2 id="labelsTitle">Labels</h2></summary>
+        <div id="labels" class="labels"></div>
+        <div id="unpaintedNote" class="sub"></div>
+        <div class="row"><button id="addLabel" class="ghost wide">+ Add a label</button></div>
+        <div class="row three"><button id="fillHoles" title="Small unpainted spots surrounded by one label take that label">Fill holes</button><button id="smoothEdges" title="Evens out jagged outlines by one face">Smooth edges</button><button id="clearAll" title="Wipes all paint in this mode (locked labels stay). Undo brings it back.">Clear all</button></div>
+      </details>
+    </div>
 
-    <details class="card" id="fillOpts">
-      <summary>Fill options</summary>
-      <div id="findBox" hidden><button id="findPiecesBtn" title="Photographs the model from 40 sides and outlines what it sees; afterwards one Fill click takes a whole piece">Find pieces automatically</button><label class="sub" title="Ten photos of each kind instead of twenty: about twice as fast, but small pieces seen only up close may be missed"><input type="checkbox" id="findQuick"> Quick: 20 photos instead of 40</label><span class="sub">Takes a few minutes; you can keep working.</span></div>
-      <div id="piecesBox" hidden>
-        <label class="switch"><input id="pieceFill" type="checkbox" checked> Fill takes a whole found piece</label>
-        <label class="switch"><input id="showPieces" type="checkbox"> Show found pieces</label>
-        <div id="pieceSizeRow" hidden><div class="row"><label for="pieceSize" class="grow">Piece size</label><span class="val">bigger ↔ smaller</span></div>
-        <input id="pieceSize" type="range" min="0" max="4" step="1" value="2" aria-label="Found piece size: left joins more, right splits more"></div>
-        <div class="row"><button id="splitPiece" title="Then click a found piece to cut it into smaller parts">Split a piece</button><button id="joinPieces" title="Then click two found pieces to make them one">Join two pieces</button></div>
-      </div>
-      <label class="switch"><input id="edgeFill" type="checkbox" checked> Fill stops at colour changes and sharp folds</label>
-      <div class="row"><label for="edgeSens" class="grow">Edge sensitivity</label><span id="edgeSensVal" class="val">50</span></div>
-      <input id="edgeSens" type="range" min="1" max="100" step="1" value="50" aria-label="Fill edge sensitivity: higher stops at smaller colour changes">
-      <label class="switch"><input id="through" type="checkbox"> Paint through (also paints the layers behind)</label>
-      <div class="row"><button id="undoWall" title="Takes away the last wall you drew">Undo wall</button><button id="clearWalls" title="Takes away every wall (your paint stays)">Clear walls</button><span id="wallInfo" class="sub"></span></div>
-    </details>
+    <div class="sidebar-section" data-sidebar-section="preview" data-sidebar-label="Preview the cut">
+      <section class="card">
+        <label class="switch strong"><input id="preview" type="checkbox"> Preview the cut</label>
+        <div id="previewNote" class="sub">Shows only what will be kept.</div>
+        <div class="views">
+          <button id="view-front" data-view="front">Front</button>
+          <button id="view-back" data-view="back">Back</button>
+          <button id="view-left" data-view="left">Left</button>
+          <button id="view-right" data-view="right">Right</button>
+          <button id="view-reset" data-view="reset">Reset</button>
+        </div>
+      </section>
+    </div>
 
-    <details class="card" id="displayOpts">
-      <summary>Display</summary>
-      <div class="row"><label for="strength" class="grow">Paint strength</label><span id="strengthVal" class="val">70%</span></div>
-      <input id="strength" type="range" min="0" max="100" step="5" value="70" aria-label="Paint strength">
-      <label class="switch"><input id="sharp" type="checkbox"> Sharp view (finer, slower on big screens)</label>
-      <div id="speedNote" class="sub"></div>
-      <div id="extrasBox"><div class="sub">Extra pieces</div><div id="extras"></div></div>
-    </details>
+    <div class="sidebar-section" data-sidebar-section="display" data-sidebar-label="Display">
+      <details class="card" id="displayOpts">
+        <summary>Display</summary>
+        <div class="row"><label for="strength" class="grow">Paint strength</label><span id="strengthVal" class="val">70%</span></div>
+        <input id="strength" type="range" min="0" max="100" step="5" value="70" aria-label="Paint strength">
+        <label class="switch"><input id="sharp" type="checkbox"> Sharp view (finer, slower on big screens)</label>
+        <div id="speedNote" class="sub"></div>
+        <div id="extrasBox"><div class="sub">Extra pieces</div><div id="extras"></div></div>
+      </details>
+    </div>
 
-    <section class="card">
-      <h2>Notes and saving</h2>
-      <textarea id="note" aria-label="Notes about this cut" placeholder="Notes about this cut (optional)"></textarea>
-      <div class="row"><span id="saveStatus" class="sub grow">Not saved yet</span><span id="stepInfo" class="sub"></span></div>
-      <div id="dbNote" class="sub"></div>
-      <button id="restore" hidden>Bring back unsaved work</button>
-    </section>
+    <div class="sidebar-section" data-sidebar-section="notes" data-sidebar-label="Notes and saving">
+      <section class="card">
+        <h2>Notes and saving</h2>
+        <textarea id="note" aria-label="Notes about this cut" placeholder="Notes about this cut (optional)"></textarea>
+        <div class="row"><span id="saveStatus" class="sub grow">Not saved yet</span><span id="stepInfo" class="sub"></span></div>
+        <div id="dbNote" class="sub"></div>
+        <button id="restore" hidden>Bring back unsaved work</button>
+      </section>
+    </div>
   </aside>
 </div>
 
@@ -428,25 +475,46 @@ const CutCore = (() => {
     }
     return { faces: Uint32Array.from(faces), labels: Uint8Array.from(out), islands };
   }
-  // Faces where at least two of their three edge neighbours share another label take that label (a few passes).
+  // Keep a painted neighbour attached to at least one other face of its label.
+  function wouldStrandPaint(f, label, labels, adj) {
+    for (let k = adj.start[f]; k < adj.start[f + 1]; k++) {
+      const g = adj.list[k];
+      if (labels[g] !== label) continue;
+      let stillConnected = false;
+      for (let j = adj.start[g]; j < adj.start[g + 1]; j++) {
+        const h = adj.list[j];
+        if (h !== f && labels[h] === label) { stillConnected = true; break; }
+      }
+      if (!stillConnected) return true;
+    }
+    return false;
+  }
   function smoothEdges(labels, adj, locked, passes) {
-    const cur = labels.slice(), changed = new Map();
+    const cur = labels.slice(), updated = new Uint8Array(labels.length), votes = new Uint32Array(256);
     for (let p = 0; p < (passes || 1); p++) {
-      const snap = cur.slice(); let any = false;
+      updated.fill(0);
+      let any = false;
       for (let f = 0; f < cur.length; f++) {
-        const own = snap[f]; if (locked && locked[own]) continue;
-        let a = -1, ca = 0, b = -1, cb = 0;
-        for (let k = adj.start[f]; k < adj.start[f + 1]; k++) {
-          const L = snap[adj.list[k]]; if (L === own) continue;
-          if (a === -1 || a === L) { a = L; ca++; } else if (b === -1 || b === L) { b = L; cb++; }
+        const own = cur[f], start = adj.start[f], end = adj.start[f + 1];
+        if (end - start < 2 || (locked && locked[own])) continue;
+        let best = own, bestVotes = 0, neighbourUpdated = false;
+        for (let k = start; k < end; k++) {
+          const g = adj.list[k], label = cur[g];
+          if (updated[g]) neighbourUpdated = true;
+          const count = ++votes[label];
+          if (count > bestVotes) { best = label; bestVotes = count; }
         }
-        const best = ca >= cb ? a : b, cnt = Math.max(ca, cb);
-        if (best >= 0 && cnt >= 2 && !(locked && locked[best])) { cur[f] = best; any = true; if (!changed.has(f)) changed.set(f, true); }
+        for (let k = start; k < end; k++) votes[cur[adj.list[k]]] = 0;
+        // A strict majority shortens the boundary. Separate adjacent edits so they cannot swap
+        // labels or make the outline advance by more than one edge in this pass.
+        if (neighbourUpdated || best === own || bestVotes * 2 <= end - start || (locked && locked[best])) continue;
+        if (own !== 0 && wouldStrandPaint(f, own, cur, adj)) continue;
+        cur[f] = best; updated[f] = 1; any = true;
       }
       if (!any) break;
     }
     const faces = [], out = [];
-    for (const f of changed.keys()) if (cur[f] !== labels[f]) { faces.push(f); out.push(cur[f]); }
+    for (let f = 0; f < cur.length; f++) if (cur[f] !== labels[f]) { faces.push(f); out.push(cur[f]); }
     return { faces: Uint32Array.from(faces), labels: Uint8Array.from(out) };
   }
   function isKept(label, unpainted) {
@@ -1707,6 +1775,7 @@ const ModelIO = (() => {
   let drag = null, spaceDown = false;
   function bufXY(e) { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) * pick.w / r.width, y: (e.clientY - r.top) * pick.h / r.height, cx: e.clientX - r.left, cy: e.clientY - r.top }; }
   function toolStart(e) {
+    if (S.tool === "segment") return;
     ensurePick();
     const p = bufXY(e);
     if (S.pieceMode) { pieceModeClick(faceAt(p.x, p.y)); drag = { kind: "none" }; return; }
@@ -1843,10 +1912,228 @@ const ModelIO = (() => {
   window.addEventListener("blur", () => { spaceDown = false; held.clear(); });
 
   /* ---------- panel ---------- */
+  function setupSidebarWidth() {
+    const app = $("app"), panel = $("panel"), divider = $("sidebarResize"), storageKey = "cutpage:sidebarWidth";
+    const style = getComputedStyle(app);
+    const minWidth = parseFloat(style.getPropertyValue("--sidebar-min-width"));
+    const stageMinWidth = parseFloat(style.getPropertyValue("--stage-min-width"));
+    const dividerWidth = parseFloat(style.getPropertyValue("--sidebar-divider-width"));
+    const maxWidth = () => Math.max(minWidth, app.clientWidth - stageMinWidth - dividerWidth);
+
+    function refreshRange() {
+      if (!divider.offsetWidth) return;
+      divider.setAttribute("aria-valuemin", minWidth);
+      divider.setAttribute("aria-valuemax", maxWidth());
+      divider.setAttribute("aria-valuenow", panel.offsetWidth);
+      divider.setAttribute("aria-valuetext", panel.offsetWidth + " pixels");
+    }
+    function showWidth(width) {
+      app.style.setProperty("--sidebar-width", width ? width + "px" : "");
+      refreshRange();
+    }
+
+    let preferredWidth = 0;
+    try {
+      const saved = Number(localStorage.getItem(storageKey));
+      if (Number.isFinite(saved) && saved >= minWidth) preferredWidth = saved;
+    } catch (e) {}
+    showWidth(preferredWidth);
+    window.addEventListener("resize", refreshRange);
+
+    function setWidth(width) {
+      showWidth(Math.round(Math.max(minWidth, Math.min(maxWidth(), width))));
+    }
+    function saveWidth() {
+      preferredWidth = panel.offsetWidth;
+      try { localStorage.setItem(storageKey, String(preferredWidth)); } catch (e) {}
+    }
+
+    let drag = null;
+    function endDrag(save) {
+      if (!drag) return;
+      const { pointerId, width } = drag;
+      drag = null;
+      delete divider.dataset.resizing;
+      if (divider.hasPointerCapture(pointerId)) divider.releasePointerCapture(pointerId);
+      if (save && divider.offsetWidth && width !== panel.offsetWidth) saveWidth();
+      else showWidth(preferredWidth);
+    }
+
+    divider.addEventListener("pointerdown", e => {
+      if (drag || !e.isPrimary || e.button !== 0) return;
+      e.preventDefault();
+      divider.focus({ preventScroll: true });
+      divider.setPointerCapture(e.pointerId);
+      drag = { pointerId: e.pointerId, x: e.clientX, width: panel.offsetWidth };
+      divider.dataset.resizing = "";
+    });
+    document.addEventListener("pointermove", e => {
+      if (drag && e.pointerId === drag.pointerId && divider.offsetWidth) setWidth(drag.width + drag.x - e.clientX);
+    });
+    document.addEventListener("pointerup", e => {
+      if (drag && e.pointerId === drag.pointerId) endDrag(true);
+    });
+    for (const event of ["pointercancel", "lostpointercapture"]) {
+      divider.addEventListener(event, e => { if (drag && e.pointerId === drag.pointerId) endDrag(false); });
+    }
+    window.addEventListener("blur", () => endDrag(false));
+
+    divider.addEventListener("keydown", e => {
+      if (e.key === "Escape" && drag) { endDrag(false); return; }
+      const width = panel.offsetWidth;
+      const widths = { ArrowLeft: width + 16, ArrowRight: width - 16, Home: minWidth, End: maxWidth() };
+      if (!Object.hasOwn(widths, e.key)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (drag) return;
+      setWidth(widths[e.key]);
+      if (panel.offsetWidth !== width) saveWidth();
+      else showWidth(preferredWidth);
+    });
+  }
+
+  function setupSidebarOrder() {
+    const panel = $("panel"), storageKey = "cutpage:sidebarOrder";
+    const sections = new Map(Array.from(panel.children, section => [section.dataset.sidebarSection, section]));
+    for (const section of sections.values()) {
+      const grip = document.createElement("button");
+      grip.type = "button";
+      grip.className = "sidebar-grip";
+      grip.title = "Drag to reorder. Use the up and down arrows when focused.";
+      grip.setAttribute("aria-label", "Reorder " + section.dataset.sidebarLabel);
+      grip.setAttribute("aria-keyshortcuts", "ArrowUp ArrowDown");
+      grip.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01" stroke-width="3"/></svg>';
+      section.prepend(grip);
+    }
+    try {
+      const order = JSON.parse(localStorage.getItem(storageKey));
+      if (Array.isArray(order)) {
+        for (const key of order) {
+          if (!sections.has(key)) continue;
+          panel.append(sections.get(key));
+          sections.delete(key);
+        }
+        panel.append(...sections.values());
+      }
+    } catch (e) {}
+
+    const visibleSections = () => Array.from(panel.children).filter(section => section.getClientRects().length);
+    function moveSection(section, target, position, grip) {
+      const focused = document.activeElement === grip;
+      target.insertAdjacentElement(position, section);
+      if (focused) grip.focus({ preventScroll: true });
+      try { localStorage.setItem(storageKey, JSON.stringify(Array.from(panel.children, card => card.dataset.sidebarSection))); } catch (e) {}
+    }
+
+    let drag = null;
+    function setDropTarget(target, position) {
+      if (drag.target === target && drag.position === position) return;
+      if (drag.target) delete drag.target.dataset.drop;
+      drag.target = target;
+      drag.position = position;
+      if (target) target.dataset.drop = position;
+    }
+
+    function updateDropTarget() {
+      const { x, y, section } = drag;
+      const bounds = panel.getBoundingClientRect();
+      drag.scroll = 0;
+      if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) {
+        setDropTarget(null);
+        return;
+      }
+      const edge = 36;
+      drag.scroll = Math.max(0, edge - (bounds.bottom - y)) / 2 - Math.max(0, edge - (y - bounds.top)) / 2;
+      if (drag.scroll && !drag.frame) drag.frame = requestAnimationFrame(scrollDrag);
+
+      const visible = visibleSections();
+      const from = visible.indexOf(section);
+      const others = visible.filter(card => card !== section);
+      const next = others.findIndex(card => {
+        const rect = card.getBoundingClientRect();
+        return y < rect.top + rect.height / 2;
+      });
+      const to = next < 0 ? others.length : next;
+      if (from < 0 || from === to) setDropTarget(null);
+      else if (to > from) setDropTarget(others[to - 1], "afterend");
+      else setDropTarget(others[to], "beforebegin");
+    }
+
+    function scrollDrag() {
+      drag.frame = 0;
+      const top = panel.scrollTop;
+      panel.scrollTop += drag.scroll;
+      if (panel.scrollTop !== top) updateDropTarget();
+    }
+
+    function endDrag(drop) {
+      if (!drag) return;
+      const { section, grip, id, target, position, frame } = drag;
+      drag = null;
+      cancelAnimationFrame(frame);
+      delete section.dataset.dragging;
+      if (target) delete target.dataset.drop;
+      if (panel.hasPointerCapture(id)) panel.releasePointerCapture(id);
+      if (drop && target) moveSection(section, target, position, grip);
+    }
+
+    panel.addEventListener("pointerdown", e => {
+      const grip = e.target.closest(".sidebar-grip");
+      if (!grip || drag || !e.isPrimary || e.button !== 0) return;
+      panel.setPointerCapture(e.pointerId);
+      drag = { grip, section: grip.parentElement, id: e.pointerId, start: e.clientY, frame: 0 };
+    });
+    document.addEventListener("pointermove", e => {
+      if (!drag || drag.id !== e.pointerId) return;
+      if (!drag.active) {
+        if (Math.abs(e.clientY - drag.start) < 5) return;
+        drag.active = true;
+        drag.section.dataset.dragging = "";
+      }
+      drag.x = e.clientX;
+      drag.y = e.clientY;
+      updateDropTarget();
+    });
+    document.addEventListener("pointerup", e => {
+      if (!drag || drag.id !== e.pointerId) return;
+      if (drag.active) {
+        drag.x = e.clientX;
+        drag.y = e.clientY;
+        updateDropTarget();
+      }
+      endDrag(true);
+    });
+    for (const event of ["pointercancel", "lostpointercapture"]) {
+      document.addEventListener(event, e => { if (drag && drag.id === e.pointerId) endDrag(false); });
+    }
+    window.addEventListener("blur", () => endDrag(false));
+    panel.addEventListener("keydown", e => {
+      if (drag && e.key === "Escape") { endDrag(false); return; }
+      const grip = e.target.closest(".sidebar-grip");
+      if (!grip || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (drag) return;
+      const visible = visibleSections(), section = grip.parentElement;
+      const up = e.key === "ArrowUp", target = visible[visible.indexOf(section) + (up ? -1 : 1)];
+      if (target) {
+        moveSection(section, target, up ? "beforebegin" : "afterend", grip);
+        grip.scrollIntoView({ block: "nearest" });
+      }
+    });
+  }
+
   function setTool(t) {
     if ((t === "dropper" || t === "clone") && S.layer !== "colour") t = "brush";
     S.tool = t;
     document.querySelectorAll(".tools button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.tool === t)));
+    const options = $("toolOptions");
+    let hasOptions = false;
+    options.querySelectorAll("[data-options-for]").forEach(group => {
+      group.hidden = !group.dataset.optionsFor.split(" ").includes(t);
+      if (!group.hidden) hasOptions = true;
+    });
+    options.hidden = !hasOptions;
     if (t !== "brush" && t !== "eraser" && t !== "clone") $("cursor").hidden = true;
     if (t !== "clone") $("cloneMark").hidden = true;
     else if (S.clone && S.clone.src) placeCloneMark(S.clone.src.x, S.clone.src.y);
@@ -2171,7 +2458,10 @@ const ModelIO = (() => {
   /* ---------- loading screen, start screen ---------- */
   function showLoading(text) { $("loading").hidden = false; $("loading").textContent = text; $("empty").hidden = true; }
   function hideLoading() { $("loading").hidden = true; }
-  function showEmpty() { $("loading").hidden = true; $("empty").hidden = false; document.body.classList.toggle("nomodel", !S.fig); }
+  function showEmpty() {
+    $("loading").hidden = true; $("empty").hidden = false; document.body.classList.toggle("nomodel", !S.fig);
+    if (!S.fig) updateFinderUI();
+  }
 
   /* ---------- your own models ---------- */
   S.localModels = [];
@@ -2335,7 +2625,7 @@ const ModelIO = (() => {
       usePieces(pieces, readLevels(d), d.level);
       try { await LocalStore.set("pieces:" + S.fig.cloth.meshId, d); } catch (e) {}
       let n = 0; { const seen = new Set(); for (let f = 0; f < S.nFaces; f++) seen.add(pieces[f]); n = seen.size; }
-      toast(n + " found pieces loaded. With Fill, one click takes a whole piece (Fill options).", 6000);
+      toast(n + " found pieces loaded. With Fill, one click takes a whole piece (Tool Options).", 6000);
     } catch (e) { toast((e && e.message) || "That pieces file could not be read."); }
   }
   async function openLocalPieces() {
@@ -2460,6 +2750,8 @@ const ModelIO = (() => {
     catch (e) { showLoading((e && e.message) || "The model could not be opened."); }
   }
   async function boot() {
+    setupSidebarWidth();
+    setupSidebarOrder();
     setTool("brush"); setSize(2); applyTheme();
     dbReady = initDb();
     resize();
@@ -2495,8 +2787,16 @@ const ModelIO = (() => {
   function finderAvailable() { return !!(window.FinderModel && window.FinderCore); }
   function updateFinderUI() {
     const ok = finderAvailable() && !!S.fig;
-    $("findPieces").hidden = !ok; $("findBox").hidden = !ok || !!S.pieces; $("savePiecesFile").hidden = !S.pieces;
-    $("findPieces").textContent = S.pieces ? "Find pieces again…" : "Find pieces automatically…";
+    const menuItem = $("findPieces"), hasPieces = !!S.fig && !!S.pieces;
+    $("tool-segment").hidden = !ok;
+    if (!ok && S.tool === "segment") setTool("brush");
+    menuItem.hidden = !ok;
+    menuItem.textContent = hasPieces ? "Find pieces again…" : "Find pieces automatically…";
+    $("findPiecesBtn").hidden = !ok || hasPieces;
+    $("findDuration").hidden = !ok || hasPieces;
+    $("findAgainHint").hidden = !ok || !hasPieces;
+    $("findAgainCommand").textContent = hasPieces ? menuItem.textContent : "";
+    $("savePiecesFile").hidden = !hasPieces;
   }
   // quick mode: the ring of eight side photos and the two from above (10 of the 20 per set)
   const QUICK_VIEWS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10];
