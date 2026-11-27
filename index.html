@@ -428,25 +428,46 @@ const CutCore = (() => {
     }
     return { faces: Uint32Array.from(faces), labels: Uint8Array.from(out), islands };
   }
-  // Faces where at least two of their three edge neighbours share another label take that label (a few passes).
+  // Keep a painted neighbour attached to at least one other face of its label.
+  function wouldStrandPaint(f, label, labels, adj) {
+    for (let k = adj.start[f]; k < adj.start[f + 1]; k++) {
+      const g = adj.list[k];
+      if (labels[g] !== label) continue;
+      let stillConnected = false;
+      for (let j = adj.start[g]; j < adj.start[g + 1]; j++) {
+        const h = adj.list[j];
+        if (h !== f && labels[h] === label) { stillConnected = true; break; }
+      }
+      if (!stillConnected) return true;
+    }
+    return false;
+  }
   function smoothEdges(labels, adj, locked, passes) {
-    const cur = labels.slice(), changed = new Map();
+    const cur = labels.slice(), updated = new Uint8Array(labels.length), votes = new Uint32Array(256);
     for (let p = 0; p < (passes || 1); p++) {
-      const snap = cur.slice(); let any = false;
+      updated.fill(0);
+      let any = false;
       for (let f = 0; f < cur.length; f++) {
-        const own = snap[f]; if (locked && locked[own]) continue;
-        let a = -1, ca = 0, b = -1, cb = 0;
-        for (let k = adj.start[f]; k < adj.start[f + 1]; k++) {
-          const L = snap[adj.list[k]]; if (L === own) continue;
-          if (a === -1 || a === L) { a = L; ca++; } else if (b === -1 || b === L) { b = L; cb++; }
+        const own = cur[f], start = adj.start[f], end = adj.start[f + 1];
+        if (end - start < 2 || (locked && locked[own])) continue;
+        let best = own, bestVotes = 0, neighbourUpdated = false;
+        for (let k = start; k < end; k++) {
+          const g = adj.list[k], label = cur[g];
+          if (updated[g]) neighbourUpdated = true;
+          const count = ++votes[label];
+          if (count > bestVotes) { best = label; bestVotes = count; }
         }
-        const best = ca >= cb ? a : b, cnt = Math.max(ca, cb);
-        if (best >= 0 && cnt >= 2 && !(locked && locked[best])) { cur[f] = best; any = true; if (!changed.has(f)) changed.set(f, true); }
+        for (let k = start; k < end; k++) votes[cur[adj.list[k]]] = 0;
+        // A strict majority shortens the boundary. Separate adjacent edits so they cannot swap
+        // labels or make the outline advance by more than one edge in this pass.
+        if (neighbourUpdated || best === own || bestVotes * 2 <= end - start || (locked && locked[best])) continue;
+        if (own !== 0 && wouldStrandPaint(f, own, cur, adj)) continue;
+        cur[f] = best; updated[f] = 1; any = true;
       }
       if (!any) break;
     }
     const faces = [], out = [];
-    for (const f of changed.keys()) if (cur[f] !== labels[f]) { faces.push(f); out.push(cur[f]); }
+    for (let f = 0; f < cur.length; f++) if (cur[f] !== labels[f]) { faces.push(f); out.push(cur[f]); }
     return { faces: Uint32Array.from(faces), labels: Uint8Array.from(out) };
   }
   function isKept(label, unpainted) {
